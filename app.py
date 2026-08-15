@@ -3,10 +3,10 @@
 mctl.lumennode.uk · 127.0.0.1:8136 · CF Access Frank-only.
 READS: queue.db mode=ro. WRITES: /home/lumen/bin/wq subprocess ONLY (atomicity,
 leases, slocks, dedup, gates all stay enforced in the CLI). No LLM calls."""
-import json, re, sqlite3, subprocess, datetime, html
+import asyncio, json, re, sqlite3, subprocess, datetime, html
 from pathlib import Path
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 WQ = "/home/lumen/bin/wq"
@@ -14,9 +14,13 @@ LANE_INIT = "/home/lumen/bin/wq-lane-init"
 WQDIR = Path("/home/lumen/agents/work-queue")
 DB = WQDIR / "queue.db"
 REPORTS = WQDIR / "reports"
+RUNS = WQDIR / "_runs"
+GOV_STATE = Path("/home/lumen/foreman/state.json")
 REGFILE = Path(__file__).resolve().parent / "projects.json"
 LANE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 REPORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(md|diff|txt)$")
+WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+SENTINELS = ("TICKET_CLOSED", "BLOCKED", "CLAIM_ERROR")
 
 app = FastAPI(title="Lumen Mission Control", docs_url=None, redoc_url=None)
 
@@ -58,6 +62,120 @@ def read_text(p):
     except Exception as e:
         return {"text": f"(read error: {e})", "mtime": "", "path": str(p)}
     return None
+
+def governor_state():
+    try:
+        return json.loads(GOV_STATE.read_text())
+    except Exception:
+        return None
+
+def resolve_run(worker):
+    """Map a wq claimed_by id to its _runs/<worker>.jsonl transcript, tolerating
+    the registration suffix a session can grow after its spawn-time filename
+    was fixed (e.g. claimed_by fleet10-a9889e-699609, file fleet10-a9889e.jsonl)."""
+    direct = RUNS / f"{worker}.jsonl"
+    if direct.is_file():
+        return direct
+    best = None
+    for p in RUNS.glob("*.jsonl"):
+        stem = p.stem
+        if worker.startswith(stem) or stem.startswith(worker):
+            if best is None or len(stem) > len(best.stem):
+                best = p
+    return best
+
+def worker_stats(path):
+    turns = tools = 0
+    sentinel = None
+    last_ts = None
+    finished = False
+    cost = None
+    try:
+        with path.open(errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                t = d.get("type")
+                if d.get("timestamp"):
+                    last_ts = d["timestamp"]
+                if t == "assistant":
+                    content = (d.get("message") or {}).get("content") or []
+                    real = False
+                    for c in content:
+                        ct = c.get("type")
+                        if ct == "tool_use":
+                            tools += 1; real = True
+                        elif ct == "text":
+                            real = True
+                            txt = (c.get("text") or "").strip()
+                            if txt in SENTINELS:
+                                sentinel = txt
+                    if real:
+                        turns += 1
+                elif t == "result":
+                    finished = True
+                    cost = d.get("total_cost_usd")
+                    if d.get("num_turns") is not None:
+                        turns = d["num_turns"]
+    except Exception:
+        pass
+    st = path.stat()
+    return {"turns": turns, "tools": tools, "cost": cost, "sentinel": sentinel,
+            "finished": finished, "mtime": datetime.datetime.utcfromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%MZ"),
+            "kb": round(st.st_size / 1024, 1), "file": path.name}
+
+def summarize_input(name, inp):
+    if not isinstance(inp, dict):
+        return str(inp)[:220]
+    if name == "Bash" and "command" in inp:
+        return inp["command"][:220]
+    if "file_path" in inp:
+        return inp["file_path"]
+    return json.dumps(inp)[:220]
+
+def render_event(d):
+    """One transcript line -> a human-readable (kind, text) pair, or None to skip.
+    Mirrors the assistant-text / [Tool] / result-block shape used in board-history
+    transcript summaries; hook/thinking-token/init noise is dropped."""
+    t = d.get("type")
+    if t == "assistant":
+        out = []
+        for c in (d.get("message") or {}).get("content") or []:
+            ct = c.get("type")
+            if ct == "text" and c.get("text", "").strip():
+                out.append(("text", c["text"].strip()))
+            elif ct == "tool_use":
+                out.append(("tool", f"[Tool] {c.get('name')}: {summarize_input(c.get('name'), c.get('input'))}"))
+        return out
+    if t == "user":
+        out = []
+        for c in (d.get("message") or {}).get("content") or []:
+            if c.get("type") != "tool_result":
+                continue
+            content = c.get("content")
+            if isinstance(content, list):
+                content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+            text = str(content or "")[:800]
+            out.append(("result", ("[Error] " if c.get("is_error") else "") + text))
+        return out
+    if t == "result":
+        cost = d.get("total_cost_usd")
+        summary = (f"— run finished: {'ERROR' if d.get('is_error') else 'ok'}, "
+                   f"{d.get('num_turns', '?')} turns, "
+                   f"{'$%.3f' % cost if cost is not None else 'cost n/a'}, "
+                   f"stop={d.get('stop_reason')}")
+        return [("done", summary)]
+    if t == "system" and d.get("subtype") == "permission_denied":
+        return [("denied", f"[Denied] {d.get('message', '')[:300]}")]
+    return None
+
+def sse(obj):
+    return f"data: {json.dumps(obj)}\n\n"
 
 
 # ---------- read APIs ----------
@@ -106,6 +224,72 @@ def api_report(name: str):
     if not str(p).startswith(str(REPORTS.resolve()) + "/") or not p.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
     return read_text(p)
+
+@app.get("/api/agents")
+def api_agents():
+    c = ro()
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    claims = [dict(r) for r in c.execute(
+        "SELECT id,lane,pri,title,claimed_by,claimed_at,lease_expires,subsystems "
+        "FROM tasks WHERE status='claimed' ORDER BY lane,lease_expires")]
+    c.close()
+    groups = {}
+    for cl in claims:
+        p = resolve_run(cl["claimed_by"]) if cl["claimed_by"] else None
+        cl["worker"] = worker_stats(p) if p else None
+        groups.setdefault(cl["lane"], []).append(cl)
+    return {"now": now, "groups": groups, "governor": governor_state()}
+
+@app.get("/api/agents/{worker}/tail")
+async def api_agent_tail(worker: str, request: Request):
+    if not WORKER_RE.match(worker):
+        return JSONResponse({"error": "bad worker id"}, status_code=400)
+    path = resolve_run(worker)
+    if not path:
+        return JSONResponse({"error": "no transcript for this worker"}, status_code=404)
+
+    async def gen():
+        buf = []
+        with path.open(errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                ev = render_event(d)
+                if ev:
+                    buf.extend(ev)
+            for kind, text in buf[-200:]:
+                yield sse({"kind": kind, "text": text})
+            yield sse({"kind": "sys", "text": "— live tail —"})
+            pos = f.tell()
+        while True:
+            if await request.is_disconnected():
+                return
+            await asyncio.sleep(2)
+            try:
+                with path.open(errors="replace") as f:
+                    f.seek(pos)
+                    new = f.read()
+                    pos = f.tell()
+            except Exception:
+                return
+            for line in new.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                for kind, text in render_event(d) or []:
+                    yield sse({"kind": kind, "text": text})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.get("/api/reports")
 def api_reports():
@@ -239,9 +423,31 @@ textarea{font:12.5px ui-monospace,monospace;min-height:110px}
 .md h1,.md h2,.md h3{color:var(--txt);text-transform:none;letter-spacing:0}
 .toast{position:fixed;bottom:16px;right:16px;background:#1d3324;color:var(--green);border:1px solid var(--green);border-radius:8px;padding:10px 14px;display:none;max-width:480px;white-space:pre-wrap;font-size:12.5px;z-index:20}
 .toast.err{background:#331d1d;color:var(--red);border-color:var(--red)}
+.gov{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.gbar{flex:1;min-width:150px}
+.gbar .lbl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:3px}
+.gbar .track{background:#0b0d11;border:1px solid var(--line);border-radius:5px;height:8px;overflow:hidden}
+.gbar .fill{height:100%;background:var(--green)}
+.gbar .fill.warn{background:var(--amber)}.gbar .fill.crit{background:var(--red)}
+.govflags{display:flex;gap:6px;align-items:center}
+.flag{padding:2px 8px;border-radius:9px;font-size:11px;font-weight:600;background:#1d3324;color:var(--green)}
+.flag.bad{background:#331d1d;color:var(--red)}
+details.lanegrp{margin-bottom:14px;border:1px solid var(--line);border-radius:8px;padding:0 12px}
+details.lanegrp summary{cursor:pointer;padding:10px 0;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+details.lanegrp summary b{color:var(--txt);text-transform:none;letter-spacing:0;font-size:14px}
+.wcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;padding-bottom:12px}
+.wcard{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px;cursor:pointer}
+.wcard:hover{border-color:var(--blue)}
+.wcard h4{margin:0 0 4px;font-size:14px}.wcard .id{color:var(--dim);font-size:11.5px}
+.wcard .stats{display:flex;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--dim);margin-top:6px}
+.wcard .sent{margin-top:4px}
+.log{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:10px;font:12.5px/1.5 ui-monospace,monospace;height:70vh;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.log .l-text{color:var(--txt)}.log .l-tool{color:var(--blue)}.log .l-result{color:var(--dim)}
+.log .l-done{color:var(--green);font-weight:600}.log .l-denied{color:var(--red)}.log .l-sys{color:var(--dim);font-style:italic}
+.log>div{padding:3px 0;border-bottom:1px solid #1b1f28}
 </style></head><body>
 <header><h1><a href="#/">🛰 Mission Control</a></h1>
-<a href="#/">Lanes</a><a href="#/reports">Reports</a>
+<a href="#/">Lanes</a><a href="#/agents">Agents</a><a href="#/reports">Reports</a>
 <span class="ext"><a href="https://scribe.lumennode.uk" target="_blank">Scribe ↗</a> · <a href="https://propose.lumennode.uk" target="_blank">Proposals ↗</a> · <a href="https://bench.lumennode.uk" target="_blank">Bench ↗</a></span></header>
 <main id="main">loading…</main>
 <div class="modal" id="modal"><div class="box" id="modalbox"></div></div>
@@ -364,6 +570,44 @@ if(j.ok){$("#modal").classList.remove("show");render()}}
 """
 
 INDEX += r"""<script>
+let tailSource=null;
+function closeTail(){if(tailSource){tailSource.close();tailSource=null}}
+function govBar(label,l){
+if(!l)return `<div class="gbar"><div class="lbl"><span>${label}</span><span class="muted">n/a</span></div><div class="track"></div></div>`;
+const pct=l.percent??0,cls=pct>=90?"crit":pct>=75?"warn":"";
+return `<div class="gbar"><div class="lbl"><span>${label}</span><span>${pct}% used</span></div><div class="track"><div class="fill ${cls}" style="width:${Math.min(pct,100)}%"></div></div></div>`;}
+async function agentsPage(){
+const s=await api("/api/agents");if(location.hash!=="#/agents")return;
+let h="";
+if(s.governor){const g=s.governor,lim=g.limits||{};
+h+='<div class="gov">'+govBar("session",lim.session)+govBar("weekly",lim.weekly_all)+govBar("fable",lim.fable_weekly_scoped);
+h+=`<div class="govflags"><span class="flag ${g.stop_active?"bad":""}">${g.stop_active?"STOP ACTIVE":"stop clear"}</span><span class="flag ${g.stale?"bad":""}">${g.stale?"STALE":"fresh"}</span></div></div>`;
+}else h+='<div class="muted" style="margin-bottom:14px">governor state unavailable</div>';
+const lanes=Object.keys(s.groups).sort();
+if(!lanes.length)h+='<div class="muted">no active claims</div>';
+for(const lane of lanes){const cards=s.groups[lane];
+h+=`<details class="lanegrp" open><summary><b>${esc(lane)}</b> <span class="muted">(${cards.length})</span></summary><div class="wcards">`;
+for(const c of cards){const w=c.worker;
+h+=`<div class="wcard" onclick="location.hash='#/agents/${encodeURIComponent(c.claimed_by||"")}'"><h4>#${c.id} ${esc(c.title)}</h4>
+<div class="id">${esc(c.claimed_by||"(no claim id)")}</div><div class="muted">${leaseLeft(c.lease_expires,s.now)}</div>`;
+if(w){h+=`<div class="stats"><span>${w.turns} turns</span><span>${w.tools} tools</span><span>${w.cost!=null?"$"+w.cost.toFixed(3):"running"}</span><span>${esc(w.mtime)}</span></div>`;
+if(w.sentinel)h+=`<div class="sent badge ${w.sentinel==="TICKET_CLOSED"?"b-done":w.sentinel==="BLOCKED"?"b-blocked":"b-rejected"}">${esc(w.sentinel)}</div>`;
+}else h+='<div class="muted stats">no transcript found</div>';
+h+="</div>";}
+h+="</div></details>";}
+$("#main").innerHTML=h;}
+async function agentTailPage(worker){
+closeTail();
+$("#main").innerHTML=`<div class="row"><button class="small" onclick="location.hash='#/agents'">← back</button><span class="muted" style="align-self:center">${esc(worker)}</span></div><div class="log" id="tailbox">connecting…</div>`;
+const box=$("#tailbox");box.innerHTML="";
+tailSource=new EventSource("/api/agents/"+encodeURIComponent(worker)+"/tail");
+tailSource.onmessage=(e)=>{const d=JSON.parse(e.data);const div=document.createElement("div");
+div.className="l-"+d.kind;div.textContent=d.text;box.appendChild(div);box.scrollTop=box.scrollHeight;};
+}
+</script>
+"""
+
+INDEX += r"""<script>
 async function reportsPage(){
 const s=await api("/api/reports");if(location.hash!=="#/reports")return;
 let h='<section><h2>Reports</h2><table><tr><th>report</th><th>size</th><th>modified</th></tr>';
@@ -378,7 +622,11 @@ function render(){
 clearInterval(timer);const hash=location.hash||"#/";
 const mLane=hash.match(/^#\/lane\/([a-z0-9-]+)$/);
 const mRep=hash.match(/^#\/report\/(.+)$/);
+const mAgent=hash.match(/^#\/agents\/(.+)$/);
+if(!mAgent)closeTail();
 if(mLane){lanePage(mLane[1]);timer=setInterval(()=>lanePage(mLane[1]),5000)}
+else if(hash==="#/agents"){agentsPage();timer=setInterval(agentsPage,5000)}
+else if(mAgent)agentTailPage(decodeURIComponent(mAgent[1]));
 else if(hash==="#/reports")reportsPage();
 else if(mRep)reportPage(decodeURIComponent(mRep[1]));
 else{showDone=false;dash();timer=setInterval(dash,5000)}}
