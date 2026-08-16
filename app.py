@@ -511,6 +511,8 @@ if(j.ok)setTimeout(()=>{$("#modal").classList.remove("show");location.hash="#/la
 
 INDEX += r"""<script>
 let showDone=false;
+let openDetails=new Set();
+function toggleDetail(id){if(openDetails.has(id))openDetails.delete(id);else openDetails.add(id);document.getElementById('d'+id).classList.toggle('show')}
 async function lanePage(lane){
 const s=await api("/api/lane/"+lane+(showDone?"?include_done=1":""));
 if(location.hash!=="#/lane/"+lane)return;
@@ -524,11 +526,11 @@ h+=`<div class="row"><button class="small" onclick="newTicket('${esc(lane)}')">ï
 if(!s.tickets.length)h+='<div class="muted">lane empty</div>';
 else{h+='<table><tr><th>#</th><th>p</th><th>status</th><th>title</th><th>agent / lease</th></tr>';
 for(const t of s.tickets){
-h+=`<tr class="trow" onclick="document.getElementById('d${t.id}').classList.toggle('show')">
+h+=`<tr class="trow" onclick="toggleDetail(${t.id})">
 <td>${t.id}</td><td>${t.pri}</td><td><span class="badge b-${esc(t.status)}">${esc(t.status)}</span></td>
 <td>${esc(t.title)}${t.gate?' <span class="muted">[gated]</span>':''}${t.subsystems?` <span class="muted">subs=${esc(t.subsystems)}</span>`:''}</td>
 <td class="muted">${esc(t.claimed_by||"")}${t.status==="claimed"?" Â· "+leaseLeft(t.lease_expires,s.now):""}</td></tr>`;
-h+=`<tr class="detail" id="d${t.id}"><td colspan="5"><pre>${esc(t.detail||"(no detail)")}</pre>`;
+h+=`<tr class="detail${openDetails.has(t.id)?" show":""}" id="d${t.id}"><td colspan="5"><pre>${esc(t.detail||"(no detail)")}</pre>`;
 if(t.notes)h+=`<div class="muted">notes: ${linkReport(t.notes)}</div>`;
 if(t.deps)h+=`<div class="muted">deps: ${esc(t.deps)}</div>`;
 h+=`<div class="row" style="margin-top:8px">`;
