@@ -29,6 +29,18 @@ def ro():
     c.row_factory = sqlite3.Row
     return c
 
+def deps_met(c, deps):
+    """Mirrors wq's own deps_met() (bin/wq) — a dep is met only if that
+    ticket id exists and is status='done'. wq#660: read-only rendering check,
+    no wq schema/logic change."""
+    if not deps or not deps.strip():
+        return True
+    for d in [x.strip() for x in deps.split(",") if x.strip()]:
+        r = c.execute("SELECT status FROM tasks WHERE id=?", (d,)).fetchone()
+        if not r or r["status"] != "done":
+            return False
+    return True
+
 def run(args, timeout=90):
     try:
         p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
@@ -204,8 +216,12 @@ def api_lane(lane: str, include_done: int = 0):
     if not LANE_RE.match(lane):
         return JSONResponse({"error": "bad lane"}, status_code=400)
     c = ro()
-    q = "SELECT * FROM tasks WHERE lane=? ORDER BY CASE status WHEN 'claimed' THEN 0 WHEN 'open' THEN 1 WHEN 'blocked' THEN 2 ELSE 3 END, pri, id"
+    # wq#660: status-group -> effective priority -> age. wq#661 will compute a
+    # real aged effective_priority; until then effective priority == stored pri.
+    q = "SELECT * FROM tasks WHERE lane=? ORDER BY CASE status WHEN 'claimed' THEN 0 WHEN 'open' THEN 1 WHEN 'blocked' THEN 2 ELSE 3 END, pri ASC, created_at ASC"
     rows = [dict(r) for r in c.execute(q, (lane,))]
+    for r in rows:
+        r["deps_met"] = deps_met(c, r["deps"])
     c.close()
     done = [r for r in rows if r["status"] == "done"]
     if not include_done:
@@ -402,6 +418,7 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 .b-open{background:#1d3324;color:var(--green)}.b-claimed{background:#33301d;color:var(--amber)}
 .b-blocked{background:#331d1d;color:var(--red)}.b-done{background:#20242c;color:var(--gray)}
 .b-rejected{background:#2a1d33;color:var(--purple)}
+.b-open-dependent{background:#1d2a33;color:var(--blue)}
 section{margin:22px 0}h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:0 0 8px}
 table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 th{color:var(--dim);font-size:12px}tr.trow{cursor:pointer}tr.trow:hover{background:#1a1e27}
@@ -513,9 +530,13 @@ INDEX += r"""<script>
 let showDone=false;
 let openDetails=new Set();
 function toggleDetail(id){if(openDetails.has(id))openDetails.delete(id);else openDetails.add(id);document.getElementById('d'+id).classList.toggle('show')}
+let numSort=0;let curLane=null;
+function toggleNumSort(){numSort=numSort===0?1:(numSort===1?-1:0);if(curLane)lanePage(curLane)}
 async function lanePage(lane){
+curLane=lane;
 const s=await api("/api/lane/"+lane+(showDone?"?include_done=1":""));
 if(location.hash!=="#/lane/"+lane)return;
+if(numSort)s.tickets=s.tickets.slice().sort((a,b)=>(a.id-b.id)*numSort);
 let h=`<section><h2>Lane: ${esc(lane)}${s.project?` · <span class="muted">${esc(s.project.dir)} · lock ${esc(s.project.lock)}</span>`:""}</h2>`;
 if(s.dispatch){
 h+=`<div class="copybar"><button class="primary" id="copybtn">📋 Copy dispatch prompt</button><span class="ok" id="copyok">copied ✓</span><span class="muted">${esc(s.dispatch.path)} · ${esc(s.dispatch.mtime)}</span></div>`;
@@ -524,13 +545,15 @@ h+=`<pre id="dispatchtxt">${esc(s.dispatch.text)}</pre>`;
 h+='</section><section><h2>Tickets</h2>';
 h+=`<div class="row"><button class="small" onclick="newTicket('${esc(lane)}')">＋ Add ticket</button><button class="small" onclick="showDone=!showDone;render()">${showDone?"hide":"show all"} done (${s.done_total})</button></div>`;
 if(!s.tickets.length)h+='<div class="muted">lane empty</div>';
-else{h+='<table><tr><th>#</th><th>p</th><th>status</th><th>title</th><th>agent / lease</th></tr>';
+else{h+=`<table><tr><th onclick="toggleNumSort()" style="cursor:pointer" title="click to sort by ticket #">#${numSort===1?" ▲":numSort===-1?" ▼":""}</th><th>p</th><th>status</th><th>title</th><th>agent / lease</th></tr>`;
 for(const t of s.tickets){
+const dispStatus=(t.status==="open"&&t.deps_met===false)?"open-dependent":t.status;
 h+=`<tr class="trow" onclick="toggleDetail(${t.id})">
-<td>${t.id}</td><td>${t.pri}</td><td><span class="badge b-${esc(t.status)}">${esc(t.status)}</span></td>
+<td>${t.id}</td><td>${t.pri}</td><td><span class="badge b-${esc(dispStatus)}">${esc(dispStatus)}</span></td>
 <td>${esc(t.title)}${t.gate?' <span class="muted">[gated]</span>':''}${t.subsystems?` <span class="muted">subs=${esc(t.subsystems)}</span>`:''}</td>
 <td class="muted">${esc(t.claimed_by||"")}${t.status==="claimed"?" · "+leaseLeft(t.lease_expires,s.now):""}</td></tr>`;
 h+=`<tr class="detail${openDetails.has(t.id)?" show":""}" id="d${t.id}"><td colspan="5"><pre>${esc(t.detail||"(no detail)")}</pre>`;
+h+=`<div class="muted">priority: ${t.pri}</div>`;
 if(t.notes)h+=`<div class="muted">notes: ${linkReport(t.notes)}</div>`;
 if(t.deps)h+=`<div class="muted">deps: ${esc(t.deps)}</div>`;
 h+=`<div class="row" style="margin-top:8px">`;
