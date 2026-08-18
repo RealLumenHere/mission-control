@@ -3,7 +3,7 @@
 mctl.lumennode.uk · 127.0.0.1:8136 · CF Access Frank-only.
 READS: queue.db mode=ro. WRITES: /home/lumen/bin/wq subprocess ONLY (atomicity,
 leases, slocks, dedup, gates all stay enforced in the CLI). No LLM calls."""
-import asyncio, json, re, sqlite3, subprocess, datetime, html
+import asyncio, json, os, re, sqlite3, subprocess, datetime, html
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -40,6 +40,25 @@ def deps_met(c, deps):
         if not r or r["status"] != "done":
             return False
     return True
+
+_FMT = "%Y-%m-%d %H:%M:%S"
+_AGING_DAYS = int(os.environ.get("WQ_AGING_DAYS", "7") or "7")
+
+def mc_effective_pri(pri, status, gate, created_at):
+    """wq#661: mirrors wq's effective_pri(). Computed read-only; never touches stored pri.
+    Only open/unclaimed tickets are boosted. Blocked/gated tickets are excluded.
+    Boost: +1 tier per WQ_AGING_DAYS days, capped at 1. Never goes below 1."""
+    if status != "open":
+        return pri
+    if gate and str(gate).strip():
+        return pri
+    try:
+        created = datetime.datetime.strptime(created_at, _FMT).replace(tzinfo=datetime.timezone.utc)
+        days = (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds() / 86400.0
+    except (TypeError, ValueError):
+        return pri
+    boost = min(1, int(days / _AGING_DAYS))
+    return max(1, pri - boost)
 
 def run(args, timeout=90):
     try:
@@ -216,13 +235,18 @@ def api_lane(lane: str, include_done: int = 0):
     if not LANE_RE.match(lane):
         return JSONResponse({"error": "bad lane"}, status_code=400)
     c = ro()
-    # wq#660: status-group -> effective priority -> age. wq#661 will compute a
-    # real aged effective_priority; until then effective priority == stored pri.
-    q = "SELECT * FROM tasks WHERE lane=? ORDER BY CASE status WHEN 'claimed' THEN 0 WHEN 'open' THEN 1 WHEN 'blocked' THEN 2 ELSE 3 END, pri ASC, created_at ASC"
+    # wq#661: fetch unsorted, compute effective_priority, sort in Python.
+    # status-group (claimed < open < blocked < done) -> effective_priority -> age.
+    q = "SELECT * FROM tasks WHERE lane=?"
     rows = [dict(r) for r in c.execute(q, (lane,))]
     for r in rows:
         r["deps_met"] = deps_met(c, r["deps"])
+        r["effective_pri"] = mc_effective_pri(r.get("pri", 2), r.get("status", ""),
+                                              r.get("gate", ""), r.get("created_at", ""))
     c.close()
+    _STATUS_ORDER = {"claimed": 0, "open": 1, "blocked": 2, "done": 3}
+    rows.sort(key=lambda r: (_STATUS_ORDER.get(r["status"], 3),
+                             r["effective_pri"], r.get("created_at") or ""))
     done = [r for r in rows if r["status"] == "done"]
     if not include_done:
         rows = [r for r in rows if r["status"] != "done"] + done[-8:]
