@@ -398,6 +398,26 @@ def healthz():
     c = ro(); n = c.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]; c.close()
     return {"ok": True, "tasks": n}
 
+@app.get("/api/chat-sessions")
+def api_chat_sessions():
+    try:
+        r = subprocess.run(
+            ["tmux", "list-sessions", "-F",
+             "#{session_name}\x09#{t:session_created}\x09#{session_windows}"],
+            capture_output=True, text=True, timeout=5)
+        sessions = []
+        for line in r.stdout.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) == 3 and parts[0].startswith("lumen-chat-"):
+                sessions.append({
+                    "name": parts[0][len("lumen-chat-"):],
+                    "created": parts[1],
+                    "windows": int(parts[2]) if parts[2].isdigit() else 1,
+                })
+        return {"sessions": sessions, "chat_url": "https://chat.lumennode.uk"}
+    except Exception as e:
+        return {"sessions": [], "chat_url": "https://chat.lumennode.uk", "error": str(e)}
+
 
 INDEX = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -465,7 +485,7 @@ details.lanegrp summary b{color:var(--txt);text-transform:none;letter-spacing:0;
 </style></head><body>
 <header><h1><a href="#/">🛰 Mission Control</a></h1>
 <a href="#/">Lanes</a><a href="#/agents">Agents</a><a href="#/reports">Reports</a>
-<span class="ext"><a href="https://scribe.lumennode.uk" target="_blank">Scribe ↗</a> · <a href="https://propose.lumennode.uk" target="_blank">Proposals ↗</a> · <a href="https://bench.lumennode.uk" target="_blank">Bench ↗</a></span></header>
+<span class="ext"><a href="https://scribe.lumennode.uk" target="_blank">Scribe ↗</a> · <a href="https://propose.lumennode.uk" target="_blank">Proposals ↗</a> · <a href="https://bench.lumennode.uk" target="_blank">Bench ↗</a> · <a href="https://chat.lumennode.uk" target="_blank">Chat ↗</a></span></header>
 <main id="main">loading…</main>
 <div class="modal" id="modal"><div class="box" id="modalbox"></div></div>
 <div class="toast" id="toast"></div>
@@ -508,7 +528,18 @@ for(const k of s.slocks)h+=`<tr><td>${esc(k.scope)}</td><td>${esc(k.holder)}</td
 h+='</section><section><h2>Recent reports</h2>';
 h+=s.recent_reports.map(r=>`<a href="#/report/${esc(r)}">${esc(r)}</a>`).join(" · ")||'<span class="muted">none</span>';
 h+='</section>';
+h+=await chatSessionsSection();
 $("#main").innerHTML=h;}
+
+async function chatSessionsSection(){
+const cs=await api("/api/chat-sessions").catch(()=>({sessions:[],chat_url:"https://chat.lumennode.uk"}));
+let h='<section><h2>Claude Chat Sessions <a href="'+esc(cs.chat_url)+'" target="_blank" style="font-size:11px;text-transform:none;letter-spacing:0;margin-left:6px">Open terminal ↗</a></h2>';
+if(cs.error)h+=`<div class="muted">error: ${esc(cs.error)}</div>`;
+else if(!cs.sessions||!cs.sessions.length)h+='<div class="muted">no active sessions — <a href="'+esc(cs.chat_url)+'" target="_blank">open chat.lumennode.uk</a> to start one</div>';
+else{h+='<table><tr><th>session</th><th>created</th><th>windows</th><th></th></tr>';
+for(const s of cs.sessions)h+=`<tr><td><code>${esc(s.name)}</code></td><td class="muted">${esc(s.created)}</td><td class="muted">${esc(String(s.windows))}</td><td><a href="${esc(cs.chat_url)}" target="_blank" class="button small">attach</a></td></tr>`;
+h+='</table>';}
+h+='</section>';return h;}
 
 function newProject(){
 $("#modalbox").innerHTML=`<h2 style="margin-top:0">New project → parallel-agent lane</h2>
