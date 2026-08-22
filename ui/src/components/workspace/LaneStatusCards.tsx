@@ -16,7 +16,7 @@ interface LaneStatusCardsProps {
 
 export function LaneStatusCards({ counts, active, onToggle }: LaneStatusCardsProps) {
   return (
-    <div className="grid grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {CARDS.map(({ status, label, dot }) => (
         <button
           key={status}

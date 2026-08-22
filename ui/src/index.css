@@ -106,4 +106,22 @@
     font-size: 13px;
     line-height: 1.5;
   }
+
+  /* Keyboard focus visible pass (wq#748): one consistent on-brand ring for every
+     focusable element, mouse/touch focus stays ring-free via :focus-visible. */
+  :focus-visible {
+    outline: 2px solid var(--color-rust);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }

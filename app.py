@@ -34,11 +34,13 @@ PROPOSALS_SUMMARY_URL = "http://127.0.0.1:8110/api/summary"
 
 app = FastAPI(title="Lumen Mission Control", docs_url=None, redoc_url=None)
 
-# v2 SPA (docs/REDESIGN_V2.md) — prebuilt ui/dist, mounted read-only at /v2.
-# Legacy inline UI below stays at / for this rollout cycle.
+# v2 SPA (docs/REDESIGN_V2.md) — prebuilt ui/dist. T6 cutover: v2 is THE console
+# at /, legacy inline UI moves to /legacy for one rollout cycle. The StaticFiles
+# mount is registered LAST (see bottom of file) so it only catches requests that
+# no other route below claimed first — Starlette matches routes in registration
+# order, and Mount("/") prefix-matches everything, so it must lose that race to
+# every @app.get/@app.post route or it would swallow /api/*, /legacy, /healthz.
 UI_DIST = Path(__file__).resolve().parent / "ui" / "dist"
-if UI_DIST.is_dir():
-    app.mount("/v2", StaticFiles(directory=UI_DIST, html=True), name="mc-v2")
 
 def ro():
     c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
@@ -952,6 +954,10 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#modal").classLis
 render();
 </script></body></html>"""
 
-@app.get("/", response_class=HTMLResponse)
-def index():
+@app.get("/legacy", response_class=HTMLResponse)
+def legacy_index():
     return INDEX
+
+# v2 SPA takes over "/" (T6 cutover). Mounted last — see note at UI_DIST above.
+if UI_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="mc-v2")

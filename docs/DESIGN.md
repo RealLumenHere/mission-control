@@ -1,9 +1,17 @@
 # Lumen Mission Control — DESIGN
 
+> **v2 (current console, wq#748 cutover):** the split-pane React/TS console lives at
+> `/`, built from `ui/` per **[docs/REDESIGN_V2.md](REDESIGN_V2.md)** — that doc is
+> the source of truth for the v2 stack, brand tokens, IA, and fleet telemetry. The
+> rest of this file describes the original single-file dashboard, now served at
+> `/legacy` for one rollout cycle, and the FastAPI backend + wq write-path both
+> UIs share unchanged.
+
 ## Stack (boring on purpose)
 Single-file FastAPI (app.py) + one vanilla-JS/CSS page, server port 127.0.0.1:8136,
 uvicorn under systemd (lumen-mission-control.service), exact propose.lumennode.uk
-chassis. No build step, no framework, no LLM calls.
+chassis. No build step, no framework, no LLM calls. (v2 adds a Vite/React build for
+`ui/dist`, served as a static SPA by the same FastAPI app — see REDESIGN_V2.md.)
 
 ## Data access
 - READS: sqlite3 "file:/home/lumen/agents/work-queue/queue.db?mode=ro&immutable=0"
@@ -20,8 +28,9 @@ chassis. No build step, no framework, no LLM calls.
   reports /home/lumen/agents/work-queue/reports/*.md (read-only, path-jailed).
 
 ## Routes
-GET  /                     dashboard: lanes summary, active claims + lease countdowns, slocks, recent reports
-GET  /lane/{lane}          lane page: DISPATCH PROMPT + COPY button top, ticket table, board render
+GET  /                     v2 SPA (ui/dist, see REDESIGN_V2.md) — split-pane console, mounted last as a static-file fallback
+GET  /legacy               legacy dashboard below: lanes summary, active claims + lease countdowns, slocks, recent reports
+GET  /lane/{lane}          deeplink redirect -> /#/lane/{lane} (v2 picks the hash up on load; legacy's own hash router also understood it)
 GET  /api/state            JSON: lanes, tickets, slocks, now (single poll endpoint, 5s UI refresh)
 GET  /api/lane/{lane}      JSON: tickets + dispatch text + board text (+ mtime)
 GET  /api/report/{name}    report markdown (name jailed to reports dir, .md only)

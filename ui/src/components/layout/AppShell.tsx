@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 
 import { Sidebar } from '@/components/layout/Sidebar'
@@ -19,6 +19,17 @@ export function AppShell() {
   const [selectedLane, setSelectedLane] = useState<string | null>(null)
   const [hostFilter, setHostFilter] = useState<string | null>(null)
   const [focusedTicketId, setFocusedTicketId] = useState<number | null>(null)
+
+  // GET /lane/{lane} (server deeplink, e.g. from wq or an external link) redirects
+  // here as /#/lane/{lane} — pick that lane up once on load, then drop the hash so
+  // it doesn't fight with in-app navigation.
+  useEffect(() => {
+    const m = /^#\/lane\/(.+)$/.exec(window.location.hash)
+    if (m) {
+      setSelectedLane(decodeURIComponent(m[1]))
+      history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+  }, [])
 
   const { data: state, refetch: refetchState } = usePoll(fetchState, STATE_POLL_MS)
   const { data: agents } = usePoll(fetchAgents, AGENTS_POLL_MS)

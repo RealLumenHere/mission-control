@@ -14,6 +14,12 @@ import type { Ticket } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { leaseCountdown } from '@/lib/format'
 import { StatusTag, displayStatus } from '@/components/workspace/StatusTag'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+
+// Narrow-viewport polish (wq#748): the agent/lease column is the least
+// essential at a glance (full detail lives in the X-Ray drawer) — drop it
+// first so id/pri/status/title stay legible without horizontal scroll.
+const NARROW_TABLE = '(max-width: 640px)'
 
 interface TicketTableProps {
   tickets: Ticket[]
@@ -78,10 +84,12 @@ export function TicketTable({ tickets, now, selectedId, onSelect }: TicketTableP
     [now],
   )
 
+  const narrow = useMediaQuery(NARROW_TABLE)
+
   const table = useReactTable({
     data: tickets,
     columns,
-    state: { sorting },
+    state: { sorting, columnVisibility: { agent: !narrow } },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -141,9 +149,18 @@ export function TicketTable({ tickets, now, selectedId, onSelect }: TicketTableP
           return (
             <div
               key={row.id}
+              role="button"
+              tabIndex={0}
+              aria-pressed={selectedId === t.id}
               onClick={() => onSelect(t.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onSelect(t.id)
+                }
+              }}
               className={cn(
-                'flex cursor-pointer items-center border-b border-ink-2/60 px-0 hover:bg-ink-1',
+                'flex cursor-pointer items-center border-b border-ink-2/60 px-0 outline-none hover:bg-ink-1 focus-visible:bg-ink-2 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring',
                 selectedId === t.id && 'bg-ink-2',
               )}
               style={{ height: ROW_HEIGHT }}
