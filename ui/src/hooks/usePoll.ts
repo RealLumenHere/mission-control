@@ -4,6 +4,7 @@ interface PollState<T> {
   data: T | null
   error: Error | null
   loading: boolean
+  refetch: () => void
 }
 
 /** Polls `fetcher` every `intervalMs`, keeping the last-good `data` on error.
@@ -12,6 +13,7 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollS
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [loading, setLoading] = useState(true)
+  const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -40,7 +42,9 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollS
       cancelled = true
       window.clearInterval(id)
     }
-  }, [fetcher, intervalMs])
+  }, [fetcher, intervalMs, nonce])
 
-  return { data, error, loading }
+  const refetch = () => setNonce((n) => n + 1)
+
+  return { data, error, loading, refetch }
 }

@@ -4,6 +4,7 @@ import { LaneList } from '@/components/layout/LaneList'
 import { GovernorBars } from '@/components/layout/GovernorBars'
 import { HeldSlocks } from '@/components/layout/HeldSlocks'
 import { ExternalLinks } from '@/components/layout/ExternalLinks'
+import { NewProjectDialog } from '@/components/layout/NewProjectDialog'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { AgentsResponse, StateResponse } from '@/lib/api'
@@ -13,6 +14,7 @@ interface SidebarProps {
   agents: AgentsResponse | null
   selectedLane: string | null
   onSelectLane: (lane: string | null) => void
+  onProjectAdded: () => void
 }
 
 function SidebarSection({ title, children }: { title: string; children: ReactNode }) {
@@ -26,7 +28,7 @@ function SidebarSection({ title, children }: { title: string; children: ReactNod
   )
 }
 
-export function Sidebar({ state, agents, selectedLane, onSelectLane }: SidebarProps) {
+export function Sidebar({ state, agents, selectedLane, onSelectLane, onProjectAdded }: SidebarProps) {
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-ink-2 bg-ink-1">
       <div className="flex items-center gap-2 border-b border-ink-2 px-3 py-3">
@@ -38,6 +40,7 @@ export function Sidebar({ state, agents, selectedLane, onSelectLane }: SidebarPr
       <ScrollArea className="flex-1">
         <SidebarSection title="Lanes">
           <LaneList lanes={state?.lanes ?? null} selected={selectedLane} onSelect={onSelectLane} />
+          <NewProjectDialog onAdded={onProjectAdded} />
         </SidebarSection>
 
         <Separator />

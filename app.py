@@ -7,6 +7,7 @@ import asyncio, json, os, re, sqlite3, subprocess, datetime, html
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 WQ = "/home/lumen/bin/wq"
@@ -23,6 +24,12 @@ WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SENTINELS = ("TICKET_CLOSED", "BLOCKED", "CLAIM_ERROR")
 
 app = FastAPI(title="Lumen Mission Control", docs_url=None, redoc_url=None)
+
+# v2 SPA (docs/REDESIGN_V2.md) — prebuilt ui/dist, mounted read-only at /v2.
+# Legacy inline UI below stays at / for this rollout cycle.
+UI_DIST = Path(__file__).resolve().parent / "ui" / "dist"
+if UI_DIST.is_dir():
+    app.mount("/v2", StaticFiles(directory=UI_DIST, html=True), name="mc-v2")
 
 def ro():
     c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
@@ -255,6 +262,18 @@ def api_lane(lane: str, include_done: int = 0):
             "dispatch": read_text(dispatch_file(lane)),
             "board": read_text(board_file(lane)),
             "project": registry().get(lane)}
+
+@app.get("/api/ticket/{tid}")
+def api_ticket(tid: int):
+    """Minimal single-ticket lookup — v2 X-Ray dep tooltips resolve dep ids
+    (which may live in another lane) to a title+status without loading that
+    lane's full ticket list. Read-only, same ro() cursor as everything else."""
+    c = ro()
+    r = c.execute("SELECT id,lane,title,status FROM tasks WHERE id=?", (tid,)).fetchone()
+    c.close()
+    if not r:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return dict(r)
 
 @app.get("/api/report/{name}")
 def api_report(name: str):
