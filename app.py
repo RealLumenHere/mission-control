@@ -3,7 +3,7 @@
 mctl.lumennode.uk · 127.0.0.1:8136 · CF Access Frank-only.
 READS: queue.db mode=ro. WRITES: /home/lumen/bin/wq subprocess ONLY (atomicity,
 leases, slocks, dedup, gates all stay enforced in the CLI). No LLM calls."""
-import asyncio, json, os, re, sqlite3, subprocess, datetime, html
+import asyncio, json, os, re, sqlite3, subprocess, datetime, html, urllib.request
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -22,6 +22,11 @@ LANE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 REPORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(md|diff|txt)$")
 WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SENTINELS = ("TICKET_CLOSED", "BLOCKED", "CLAIM_ERROR")
+# wq#768 T7: 52 blocked / 23 naming Frank|gate|approval is the audit's own count
+# method (FLEET_OPS_AUDIT_2026-08-21.md F1) — mirrored here as the blocked-by-human
+# classifier so the review queue's count is reproducible against that finding.
+REVIEW_HUMAN_RE = re.compile(r"\b(frank|gate|approval)\b", re.I)
+PROPOSALS_SUMMARY_URL = "http://127.0.0.1:8110/api/summary"
 
 app = FastAPI(title="Lumen Mission Control", docs_url=None, redoc_url=None)
 
@@ -66,6 +71,37 @@ def mc_effective_pri(pri, status, gate, created_at):
         return pri
     boost = min(1, int(days / _AGING_DAYS))
     return max(1, pri - boost)
+
+def mc_gate_met(gate):
+    """Mirrors wq's own gate_met() (bin/wq) — a gate clause is 'path' or
+    'path:exists'/'path:missing'; empty gate is always met. Read-only precondition
+    check, no wq schema/logic change. Returns (ok, reason)."""
+    if not gate or not gate.strip():
+        return True, ""
+    for clause in [x.strip() for x in gate.split(",") if x.strip()]:
+        path, _, cond = clause.rpartition(":") if ":" in clause else (clause, "", "exists")
+        path = path.strip(); cond = (cond or "exists").strip().lower()
+        present = os.path.exists(path)
+        if cond == "exists" and not present:
+            return False, f"gate: {path} missing"
+        if cond == "missing" and present:
+            return False, f"gate: {path} present (must be absent)"
+    return True, ""
+
+def proposals_pending():
+    """Server-side-only fetch of the Minerva proposals dashboard's pending count
+    (wq#768 T7 scope item 4) — CF Access on propose.lumennode.uk is Frank-only,
+    so the browser must never call it directly; this hits its loopback port
+    instead. 'deploy_ready' is proposals-ui/app.py's ALLOWED_STATUS bucket a
+    human PATCHes a proposal into before shipping/deferring/rejecting it — the
+    closest thing that service exposes to "awaiting your decision". Fail-soft:
+    None when the service is down or unreachable."""
+    try:
+        with urllib.request.urlopen(PROPOSALS_SUMMARY_URL, timeout=3) as r:
+            data = json.loads(r.read())
+        return data.get("deploy_ready", 0)
+    except Exception:
+        return None
 
 def run(args, timeout=90):
     try:
@@ -235,7 +271,70 @@ def api_state():
     return {"now": now, "lanes": lanes, "claims": claims, "slocks": slocks,
             "projects": reg,
             "dispatch_lanes": [l for l in lanes if dispatch_file(l).is_file()],
-            "recent_reports": [p.name for p in reports if p.is_file()]}
+            "recent_reports": [p.name for p in reports if p.is_file()],
+            "proposals_pending": proposals_pending()}
+
+@app.get("/api/review")
+def api_review():
+    """wq#768 T7 — REVIEW queue: surfaces work parked on a human decision.
+    Aggregates read-only: blocked tickets whose notes name Frank/gate/approval
+    (REVIEW_HUMAN_RE — mirrors FLEET_OPS_AUDIT_2026-08-21.md's own count method),
+    the `user` lane in full (Frank-only by wq convention — wq claim refuses it),
+    and open/claimed/blocked tickets with an unmet --gate precondition. A ticket
+    that's merely open-dependent on another ticket's deps is NOT included — it's
+    waiting on work, not on Frank. `downstream` is the other non-done tickets that
+    list this one in their own deps, i.e. what a decision here unblocks."""
+    c = ro()
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    now = now_dt.strftime(_FMT)
+    rows = [dict(r) for r in c.execute("SELECT * FROM tasks WHERE status != 'done'")]
+    c.close()
+
+    downstream = {}
+    for r in rows:
+        for d in [x.strip() for x in (r["deps"] or "").split(",") if x.strip()]:
+            downstream.setdefault(d, []).append({"id": r["id"], "lane": r["lane"], "title": r["title"]})
+
+    items = []
+    for r in rows:
+        kinds = []
+        if r["lane"] == "user":
+            kinds.append("user_lane")
+        gate_ok, gate_reason = mc_gate_met(r["gate"])
+        if r["gate"] and not gate_ok:
+            kinds.append("gated")
+        if r["status"] == "blocked" and REVIEW_HUMAN_RE.search(r["notes"] or ""):
+            kinds.append("blocked_human")
+        if not kinds:
+            continue
+
+        note_line = next((ln.strip() for ln in (r["notes"] or "").splitlines() if ln.strip()), "")
+        reason = (note_line or
+                  (gate_reason if "gated" in kinds else "") or
+                  ("parked in user lane — Frank-only" if "user_lane" in kinds else "awaiting decision"))
+
+        try:
+            created = datetime.datetime.strptime(r["created_at"], _FMT).replace(tzinfo=datetime.timezone.utc)
+            age_days = (now_dt - created).total_seconds() / 86400.0
+        except (TypeError, ValueError):
+            age_days = 0.0
+
+        down = downstream.get(str(r["id"]), [])
+        # cost-of-delay = (downstream blocked count x age); +1 so an isolated
+        # item still ranks by age instead of collapsing to zero.
+        cost = (len(down) + 1) * age_days
+
+        items.append({
+            "id": r["id"], "lane": r["lane"], "title": r["title"], "pri": r["pri"],
+            "status": r["status"], "kinds": kinds, "reason": reason[:220],
+            "notes": r["notes"], "gate": r["gate"], "created_at": r["created_at"],
+            "age_days": round(age_days, 2),
+            "downstream": down, "downstream_count": len(down),
+            "cost_of_delay": round(cost, 2),
+        })
+
+    items.sort(key=lambda x: x["cost_of_delay"], reverse=True)
+    return {"now": now, "items": items, "count": len(items)}
 
 @app.get("/api/lane/{lane}")
 def api_lane(lane: str, include_done: int = 0):

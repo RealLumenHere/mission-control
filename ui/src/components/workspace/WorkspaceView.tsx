@@ -1,22 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import type { StateResponse, TaskStatus } from '@/lib/api'
+import type { ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
 import { useLane } from '@/hooks/useLane'
 import { LaneStatusCards } from '@/components/workspace/LaneStatusCards'
 import { TicketTable } from '@/components/workspace/TicketTable'
 import { AddTicketDialog } from '@/components/workspace/AddTicketDialog'
 import { XRayDrawer } from '@/components/xray/XRayDrawer'
+import { ReviewQueue } from '@/components/review/ReviewQueue'
 import { displayStatus } from '@/components/workspace/StatusTag'
 
 const LANE_POLL_MS = 5000
 
 interface WorkspaceViewProps {
   state: StateResponse | null
+  review: ReviewResponse | null
+  onReviewChanged: () => void
   selectedLane: string | null
   onSelectLane: (lane: string | null) => void
 }
 
-export function WorkspaceView({ state, selectedLane, onSelectLane }: WorkspaceViewProps) {
+export function WorkspaceView({
+  state,
+  review,
+  onReviewChanged,
+  selectedLane,
+  onSelectLane,
+}: WorkspaceViewProps) {
   const [statusFilter, setStatusFilter] = useState<TaskStatus | null>(null)
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
 
@@ -63,6 +72,8 @@ export function WorkspaceView({ state, selectedLane, onSelectLane }: WorkspaceVi
     const laneNames = state ? Object.keys(state.lanes).sort() : []
     return (
       <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
+        <ReviewQueue review={review} onOpenTicket={navigate} onChanged={onReviewChanged} />
+
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {laneNames.map((l) => {
             const c = state?.lanes[l] ?? {}

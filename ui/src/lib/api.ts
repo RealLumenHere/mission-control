@@ -33,6 +33,7 @@ export interface StateResponse {
   projects: Record<string, unknown>
   dispatch_lanes: string[]
   recent_reports: string[]
+  proposals_pending: number | null
 }
 
 export interface GovernorLimit {
@@ -168,6 +169,43 @@ export interface WriteResult {
   code: number
   stdout: string
   stderr: string
+}
+
+// ---- review queue (T7) ----
+
+export type ReviewKind = 'blocked_human' | 'user_lane' | 'gated'
+
+export interface ReviewDownstream {
+  id: number
+  lane: string
+  title: string
+}
+
+export interface ReviewItem {
+  id: number
+  lane: string
+  title: string
+  pri: number
+  status: TicketStatus
+  kinds: ReviewKind[]
+  reason: string
+  notes: string | null
+  gate: string | null
+  created_at: string | null
+  age_days: number
+  downstream: ReviewDownstream[]
+  downstream_count: number
+  cost_of_delay: number
+}
+
+export interface ReviewResponse {
+  now: string
+  items: ReviewItem[]
+  count: number
+}
+
+export function fetchReview(): Promise<ReviewResponse> {
+  return getJSON<ReviewResponse>('/api/review')
 }
 
 export function fetchLane(lane: string, includeDone = false): Promise<LaneResponse> {

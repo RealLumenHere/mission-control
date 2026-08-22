@@ -18,3 +18,10 @@ export function leaseCountdown(leaseExpires: string | null, now: string | null):
   if (deltaMin >= 0) return `${deltaMin}m left`
   return `${-deltaMin}m over`
 }
+
+/** Server-computed `age_days` (float, days since created_at) -> compact label. */
+export function formatAge(ageDays: number): string {
+  if (ageDays >= 1) return `${Math.floor(ageDays)}d`
+  const hours = Math.round(ageDays * 24)
+  return hours < 1 ? '<1h' : `${hours}h`
+}

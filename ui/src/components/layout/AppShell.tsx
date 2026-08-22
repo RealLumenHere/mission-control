@@ -7,10 +7,11 @@ import { WorkspaceView } from '@/components/workspace/WorkspaceView'
 import { FleetView } from '@/components/fleet/FleetView'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { usePoll } from '@/hooks/usePoll'
-import { fetchAgents, fetchState } from '@/lib/api'
+import { fetchAgents, fetchReview, fetchState } from '@/lib/api'
 
 const STATE_POLL_MS = 5000
 const AGENTS_POLL_MS = 5000
+const REVIEW_POLL_MS = 5000
 
 export function AppShell() {
   const [view, setView] = useState<ArenaView>('workspace')
@@ -18,6 +19,12 @@ export function AppShell() {
 
   const { data: state, refetch: refetchState } = usePoll(fetchState, STATE_POLL_MS)
   const { data: agents } = usePoll(fetchAgents, AGENTS_POLL_MS)
+  const { data: review, refetch: refetchReview } = usePoll(fetchReview, REVIEW_POLL_MS)
+
+  function goToReview() {
+    setView('workspace')
+    setSelectedLane(null)
+  }
 
   return (
     <TooltipProvider>
@@ -26,9 +33,11 @@ export function AppShell() {
         <Sidebar
           state={state}
           agents={agents}
+          reviewCount={review?.count ?? null}
           selectedLane={selectedLane}
           onSelectLane={setSelectedLane}
           onProjectAdded={refetchState}
+          onReviewClick={goToReview}
         />
 
         <div className="flex flex-1 flex-col overflow-hidden">
@@ -40,7 +49,13 @@ export function AppShell() {
           </header>
 
           {view === 'workspace' ? (
-            <WorkspaceView state={state} selectedLane={selectedLane} onSelectLane={setSelectedLane} />
+            <WorkspaceView
+              state={state}
+              review={review}
+              onReviewChanged={refetchReview}
+              selectedLane={selectedLane}
+              onSelectLane={setSelectedLane}
+            />
           ) : (
             <FleetView />
           )}
