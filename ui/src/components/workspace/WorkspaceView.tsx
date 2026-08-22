@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import type { ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
+import type { AgentsResponse, ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
 import { useLane } from '@/hooks/useLane'
 import { LaneStatusCards } from '@/components/workspace/LaneStatusCards'
 import { TicketTable } from '@/components/workspace/TicketTable'
@@ -14,6 +14,7 @@ const LANE_POLL_MS = 5000
 interface WorkspaceViewProps {
   state: StateResponse | null
   review: ReviewResponse | null
+  agents: AgentsResponse | null
   onReviewChanged: () => void
   selectedLane: string | null
   onSelectLane: (lane: string | null) => void
@@ -22,6 +23,7 @@ interface WorkspaceViewProps {
 export function WorkspaceView({
   state,
   review,
+  agents,
   onReviewChanged,
   selectedLane,
   onSelectLane,
@@ -122,6 +124,7 @@ export function WorkspaceView({
       <XRayDrawer
         ticket={selectedTicket}
         now={lane?.now ?? null}
+        agents={agents}
         onOpenChange={(open) => !open && setSelectedTicketId(null)}
         onNavigate={navigate}
         onChanged={refetchLane}

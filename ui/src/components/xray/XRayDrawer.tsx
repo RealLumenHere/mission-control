@@ -1,6 +1,6 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { Ticket } from '@/lib/api'
+import type { AgentsResponse, Ticket } from '@/lib/api'
 import { MetadataTab } from '@/components/xray/MetadataTab'
 import { TerminalTab } from '@/components/xray/TerminalTab'
 import { ReportsTab } from '@/components/xray/ReportsTab'
@@ -8,12 +8,13 @@ import { ReportsTab } from '@/components/xray/ReportsTab'
 interface XRayDrawerProps {
   ticket: Ticket | null
   now: string | null
+  agents: AgentsResponse | null
   onOpenChange: (open: boolean) => void
   onNavigate: (lane: string, id: number) => void
   onChanged: () => void
 }
 
-export function XRayDrawer({ ticket, now, onOpenChange, onNavigate, onChanged }: XRayDrawerProps) {
+export function XRayDrawer({ ticket, now, agents, onOpenChange, onNavigate, onChanged }: XRayDrawerProps) {
   return (
     <Sheet open={ticket !== null} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-xl">
@@ -36,8 +37,8 @@ export function XRayDrawer({ ticket, now, onOpenChange, onNavigate, onChanged }:
               <TabsContent value="metadata" className="overflow-auto">
                 <MetadataTab ticket={ticket} now={now} onNavigate={onNavigate} onChanged={onChanged} />
               </TabsContent>
-              <TabsContent value="terminal" className="flex overflow-auto">
-                <TerminalTab ticket={ticket} />
+              <TabsContent value="terminal" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <TerminalTab ticket={ticket} agents={agents} />
               </TabsContent>
               <TabsContent value="reports" className="overflow-auto">
                 <ReportsTab ticket={ticket} />

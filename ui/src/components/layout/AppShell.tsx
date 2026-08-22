@@ -52,6 +52,7 @@ export function AppShell() {
             <WorkspaceView
               state={state}
               review={review}
+              agents={agents}
               onReviewChanged={refetchReview}
               selectedLane={selectedLane}
               onSelectLane={setSelectedLane}
