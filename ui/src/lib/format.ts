@@ -25,3 +25,25 @@ export function formatAge(ageDays: number): string {
   const hours = Math.round(ageDays * 24)
   return hours < 1 ? '<1h' : `${hours}h`
 }
+
+/** Bytes -> compact "12.3G" / "512M" label (binary units, no decimals under 10). */
+export function formatBytes(bytes: number): string {
+  const units: [number, string][] = [[1024 ** 4, 'T'], [1024 ** 3, 'G'], [1024 ** 2, 'M'], [1024, 'K']]
+  for (const [divisor, suffix] of units) {
+    if (bytes >= divisor) {
+      const v = bytes / divisor
+      return `${v >= 10 ? Math.round(v) : v.toFixed(1)}${suffix}`
+    }
+  }
+  return `${bytes}B`
+}
+
+/** Seconds -> compact "3d 4h" / "12h" / "5m" uptime label. */
+export function formatUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
+}

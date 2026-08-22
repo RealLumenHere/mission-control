@@ -220,6 +220,56 @@ export function fetchReports(): Promise<ReportsResponse> {
   return getJSON<ReportsResponse>('/api/reports')
 }
 
+// ---- fleet (T5) ----
+
+export type FleetNodeStatus = 'ok' | 'unreachable' | 'parked'
+
+export interface FleetAgentRef {
+  id: number
+  lane: string
+  title: string
+  claimed_by: string | null
+}
+
+export interface FleetSlockRef {
+  scope: string
+  holder: string
+  note: string | null
+}
+
+export interface FleetNode {
+  status: FleetNodeStatus
+  class: string
+  cpu_pct?: number
+  mem_used_bytes?: number
+  mem_total_bytes?: number
+  vram_used_bytes?: number
+  vram_total_bytes?: number
+  loadavg?: [number, number, number]
+  uptime_s?: number
+  error?: string
+  agents: FleetAgentRef[]
+  slocks: FleetSlockRef[]
+}
+
+export interface FleetGroup {
+  class: string
+  label: string
+  hosts: string[]
+}
+
+export interface FleetResponse {
+  generated_at: string | null
+  staleness_s: number | null
+  stale: boolean
+  nodes: Record<string, FleetNode>
+  groups: FleetGroup[]
+}
+
+export function fetchFleet(): Promise<FleetResponse> {
+  return getJSON<FleetResponse>('/api/fleet')
+}
+
 export function fetchReport(name: string): Promise<ReportText> {
   return getJSON<ReportText>(`/api/report/${encodeURIComponent(name)}`)
 }

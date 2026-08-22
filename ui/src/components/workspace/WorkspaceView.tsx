@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 
-import type { AgentsResponse, ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
+import type { AgentsResponse, FleetResponse, ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
 import { useLane } from '@/hooks/useLane'
 import { LaneStatusCards } from '@/components/workspace/LaneStatusCards'
 import { TicketTable } from '@/components/workspace/TicketTable'
@@ -18,6 +19,23 @@ interface WorkspaceViewProps {
   onReviewChanged: () => void
   selectedLane: string | null
   onSelectLane: (lane: string | null) => void
+  fleet: FleetResponse | null
+  hostFilter: string | null
+  onClearHost: () => void
+  onTicketFocus: (id: number | null) => void
+}
+
+function HostFilterChip({ host, onClear }: { host: string; onClear: () => void }) {
+  return (
+    <button
+      onClick={onClear}
+      className="flex items-center gap-1.5 rounded-sm border border-rust/60 bg-ink-2 px-2 py-1 text-[11px] text-bone"
+    >
+      <span className="text-sand">host</span>
+      {host}
+      <X className="size-3 text-sand" />
+    </button>
+  )
 }
 
 export function WorkspaceView({
@@ -27,31 +45,55 @@ export function WorkspaceView({
   onReviewChanged,
   selectedLane,
   onSelectLane,
+  fleet,
+  hostFilter,
+  onClearHost,
+  onTicketFocus,
 }: WorkspaceViewProps) {
   const [statusFilter, setStatusFilter] = useState<TaskStatus | null>(null)
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
 
   const { data: lane, refetch: refetchLane } = useLane(selectedLane, LANE_POLL_MS)
+  const hostAgents = useMemo(
+    () => (hostFilter ? (fleet?.nodes[hostFilter]?.agents ?? []) : null),
+    [hostFilter, fleet],
+  )
 
   // A cross-lane dep-link click (navigate()) changes lane + ticket together —
   // this flag tells the lane-change effect below not to clobber that ticket
   // selection the way a plain sidebar/lane-card click should.
   const navigatingRef = useRef(false)
 
+  // Cross-filter (T5): the Fleet pane highlights whichever host is running the
+  // selected ticket's agent — reported up so it can survive a Fleet<->Workspace
+  // view switch (this component unmounts on switch, AppShell state doesn't).
+  function selectTicket(id: number | null) {
+    setSelectedTicketId(id)
+    onTicketFocus(id)
+  }
+
   useEffect(() => {
     setStatusFilter(null)
     if (navigatingRef.current) {
       navigatingRef.current = false
     } else {
-      setSelectedTicketId(null)
+      selectTicket(null)
     }
+    // selectTicket is a plain function recreated each render (not a stable
+    // dependency) — this effect only cares about `selectedLane` changing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLane])
 
   const filtered = useMemo(() => {
     if (!lane) return []
-    if (!statusFilter) return lane.tickets
-    return lane.tickets.filter((t) => displayStatus(t) === statusFilter || t.status === statusFilter)
-  }, [lane, statusFilter])
+    let out = lane.tickets
+    if (statusFilter) out = out.filter((t) => displayStatus(t) === statusFilter || t.status === statusFilter)
+    if (hostAgents) {
+      const ids = new Set(hostAgents.map((a) => a.id))
+      out = out.filter((t) => ids.has(t.id))
+    }
+    return out
+  }, [lane, statusFilter, hostAgents])
 
   const counts = useMemo(() => {
     const c: Partial<Record<TaskStatus, number>> = {}
@@ -67,11 +109,40 @@ export function WorkspaceView({
       navigatingRef.current = true
       onSelectLane(targetLane)
     }
-    setSelectedTicketId(id)
+    selectTicket(id)
   }
 
   if (!selectedLane) {
     const laneNames = state ? Object.keys(state.lanes).sort() : []
+
+    if (hostFilter) {
+      return (
+        <div className="flex flex-1 flex-col gap-3 overflow-auto p-4">
+          <HostFilterChip host={hostFilter} onClear={onClearHost} />
+          {hostAgents && hostAgents.length > 0 ? (
+            <div className="flex flex-col overflow-hidden rounded-md border border-ink-2">
+              {hostAgents.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => navigate(a.lane, a.id)}
+                  className="flex items-center gap-3 border-b border-ink-2/60 px-2 py-1.5 text-left text-[12px] last:border-b-0 hover:bg-ink-1"
+                >
+                  <span className="tabular-nums text-sand">#{a.id}</span>
+                  <span className="w-32 shrink-0 truncate text-sand">{a.lane}</span>
+                  <span className="flex-1 truncate text-bone">{a.title}</span>
+                  <span className="shrink-0 truncate text-sand/70">{a.claimed_by}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-ink-2 text-[12px] text-sand/60">
+              no tasks executing on {hostFilter}
+            </div>
+          )}
+        </div>
+      )
+    }
+
     return (
       <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
         <ReviewQueue review={review} onOpenTicket={navigate} onChanged={onReviewChanged} />
@@ -105,27 +176,30 @@ export function WorkspaceView({
 
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <LaneStatusCards
           counts={counts}
           active={statusFilter}
           onToggle={(s) => setStatusFilter((cur) => (cur === s ? null : s))}
         />
-        <AddTicketDialog lane={selectedLane} onAdded={refetchLane} />
+        <div className="flex shrink-0 items-center gap-2">
+          {hostFilter && <HostFilterChip host={hostFilter} onClear={onClearHost} />}
+          <AddTicketDialog lane={selectedLane} onAdded={refetchLane} />
+        </div>
       </div>
 
       <TicketTable
         tickets={filtered}
         now={lane?.now ?? null}
         selectedId={selectedTicketId}
-        onSelect={setSelectedTicketId}
+        onSelect={selectTicket}
       />
 
       <XRayDrawer
         ticket={selectedTicket}
         now={lane?.now ?? null}
         agents={agents}
-        onOpenChange={(open) => !open && setSelectedTicketId(null)}
+        onOpenChange={(open) => !open && selectTicket(null)}
         onNavigate={navigate}
         onChanged={refetchLane}
       />

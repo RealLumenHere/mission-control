@@ -26,6 +26,14 @@
   --radius-lg: 0.375rem;
   --radius-md: 0.3125rem;
   --radius-sm: 0.25rem;
+
+  /* Tremor theme tokens (Tailwind v4 CSS-first equivalent of Tremor's old JS preset —
+   * @tremor/react components reference these var names directly, e.g. `bg-tremor-brand`,
+   * `rounded-tremor-full`. Fleet gauges override --color-tremor-brand per-instance via
+   * inline style to pick a fill color by utilization threshold; see fleet/Gauge.tsx. */
+  --color-tremor-brand: var(--color-sea-lt);
+  --color-tremor-brand-muted: var(--color-ink-2);
+  --radius-tremor-full: 9999px;
 }
 
 :root {

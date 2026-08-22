@@ -7,19 +7,37 @@ import { WorkspaceView } from '@/components/workspace/WorkspaceView'
 import { FleetView } from '@/components/fleet/FleetView'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { usePoll } from '@/hooks/usePoll'
-import { fetchAgents, fetchReview, fetchState } from '@/lib/api'
+import { fetchAgents, fetchFleet, fetchReview, fetchState } from '@/lib/api'
 
 const STATE_POLL_MS = 5000
 const AGENTS_POLL_MS = 5000
 const REVIEW_POLL_MS = 5000
+const FLEET_POLL_MS = 10000
 
 export function AppShell() {
   const [view, setView] = useState<ArenaView>('workspace')
   const [selectedLane, setSelectedLane] = useState<string | null>(null)
+  const [hostFilter, setHostFilter] = useState<string | null>(null)
+  const [focusedTicketId, setFocusedTicketId] = useState<number | null>(null)
 
   const { data: state, refetch: refetchState } = usePoll(fetchState, STATE_POLL_MS)
   const { data: agents } = usePoll(fetchAgents, AGENTS_POLL_MS)
   const { data: review, refetch: refetchReview } = usePoll(fetchReview, REVIEW_POLL_MS)
+  const { data: fleet } = usePoll(fetchFleet, FLEET_POLL_MS)
+
+  function selectHost(host: string) {
+    setHostFilter((cur) => {
+      const next = cur === host ? null : host
+      if (next) setView('workspace')
+      return next
+    })
+  }
+
+  const highlightHosts = fleet
+    ? Object.entries(fleet.nodes)
+        .filter(([, node]) => node.agents.some((a) => a.id === focusedTicketId))
+        .map(([host]) => host)
+    : []
 
   function goToReview() {
     setView('workspace')
@@ -56,9 +74,18 @@ export function AppShell() {
               onReviewChanged={refetchReview}
               selectedLane={selectedLane}
               onSelectLane={setSelectedLane}
+              fleet={fleet}
+              hostFilter={hostFilter}
+              onClearHost={() => setHostFilter(null)}
+              onTicketFocus={setFocusedTicketId}
             />
           ) : (
-            <FleetView />
+            <FleetView
+              fleet={fleet}
+              hostFilter={hostFilter}
+              highlightHosts={highlightHosts}
+              onSelectHost={selectHost}
+            />
           )}
         </div>
       </div>

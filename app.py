@@ -18,6 +18,10 @@ REPORTS = WQDIR / "reports"
 RUNS = WQDIR / "_runs"
 GOV_STATE = Path("/home/lumen/foreman/state.json")
 REGFILE = Path(__file__).resolve().parent / "projects.json"
+# wq#744's collector writes here (not mission-control/, which that ticket's own
+# "do not touch mission-control" constraint ruled out — see reports/wq744_mcv2_t4_telemetry.md).
+FLEET_SNAPSHOT = Path("/home/lumen/telemetry/fleet_telemetry.json")
+FLEET_STALE_S = 60  # 2x the collector's 30s timer cadence (T4 report's own guidance)
 LANE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 REPORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(md|diff|txt)$")
 WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -142,6 +146,59 @@ def governor_state():
         return json.loads(GOV_STATE.read_text())
     except Exception:
         return None
+
+# ---------- fleet (T5) ----------
+# Static host classification + agent/slock->host mapping, per REDESIGN_V2.md's fleet
+# telemetry section. Nothing here is derived from live SSH/config probing (CONSTRAINT:
+# never SSH from the web app) — it's a small hand-maintained map, same spirit as the
+# lane/dispatch file naming conventions above.
+FLEET_CLASS_HOSTS = {
+    "orchestrator": ["lumen"],
+    # Mac Pro 6,1 boxes running local inference rungs (isis: Qwen3-32B, nephthys:
+    # Qwen3-14B awareness/embeddings, khepri: RE/forensics bench, currently offline).
+    "inference-mac": ["isis", "nephthys", "khepri"],
+    "n100": ["bes", "maat", "sobek", "sia"],
+    # hapi.blade_naming (lumen_state): hapi-1..hapi-N sequential, max 6/chassis. None
+    # have booted yet (hapi-1 bringup still pending per hapi-1.bringup_eta) so none of
+    # these appear in the telemetry snapshot's roster (built from tailscale_ip facts,
+    # which a blade only gets once it boots) — synthesized as "parked" placeholders
+    # below rather than left off the grid.
+    "hapi": ["hapi-1", "hapi-2", "hapi-3", "hapi-4", "hapi-5", "hapi-6"],
+}
+FLEET_CLASS_LABELS = {
+    "orchestrator": "Orchestrator",
+    "inference-mac": "Inference (Mac Pro)",
+    "n100": "N100 Fleet",
+    "hapi": "Hapi Chassis (BC-250)",
+    "other": "Other",
+}
+FLEET_CLASS_ORDER = ["orchestrator", "inference-mac", "n100", "hapi", "other"]
+FLEET_HOST_CLASS = {h: c for c, hosts in FLEET_CLASS_HOSTS.items() for h in hosts}
+
+def fleet_node_class(host):
+    return FLEET_HOST_CLASS.get(host, "other")
+
+def fleet_hosts_for_claim(lane, subsystems):
+    """wq claim -> host(s). Per REDESIGN_V2.md: all claude -p workers run on Lumen
+    (default), except the LPP/pokemon lane which drives gameboy directly, and litellm
+    subsystem work which touches the local-inference rungs on isis/nephthys. The
+    "litellm" subsystem tag doesn't distinguish which rung (see queue.db — tickets are
+    tagged just "litellm", never "litellm-isis" etc.), so both are tagged rather than
+    guessing one."""
+    subs = {s.strip() for s in (subsystems or "").split(",") if s.strip()}
+    if "litellm" in subs:
+        return ["isis", "nephthys"]
+    if lane == "pokemon":
+        return ["gameboy"]
+    return ["lumen"]
+
+def fleet_hosts_for_scope(scope):
+    """slock scope -> host(s), same reasoning as fleet_hosts_for_claim above."""
+    if scope == "litellm" or scope.startswith("litellm-"):
+        return ["isis", "nephthys"]
+    if scope in ("lpp-tree", "lpp-repo"):
+        return ["gameboy"]
+    return ["lumen"]
 
 def resolve_run(worker):
     """Map a wq claimed_by id to its _runs/<worker>.jsonl transcript, tolerating
@@ -457,6 +514,68 @@ def api_reports():
             out.append({"name": p.name, "kb": round(p.stat().st_size / 1024, 1),
                         "mtime": datetime.datetime.utcfromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%MZ")})
     return {"reports": out}
+
+@app.get("/api/fleet")
+def api_fleet():
+    """Fleet Overview pane (T5). Read-only: serves wq#744's collector snapshot as-is,
+    plus agent-lease/slock host tags computed from queue.db. CONSTRAINT: never SSH from
+    the web app — a missing/unreadable snapshot is a graceful empty state, not an error."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    raw = None
+    try:
+        raw = json.loads(FLEET_SNAPSHOT.read_text())
+    except Exception:
+        raw = None
+
+    generated_at = raw.get("generated_at") if raw else None
+    staleness_s = None
+    if generated_at:
+        try:
+            gen_dt = datetime.datetime.strptime(generated_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=datetime.timezone.utc)
+            staleness_s = round((now - gen_dt).total_seconds(), 1)
+        except Exception:
+            staleness_s = None
+    stale = staleness_s is None or staleness_s > FLEET_STALE_S
+
+    nodes = {host: dict(data) for host, data in (raw.get("nodes") or {}).items()} if raw else {}
+    for slot in FLEET_CLASS_HOSTS["hapi"]:
+        nodes.setdefault(slot, {"status": "parked"})
+    for host, data in nodes.items():
+        data["class"] = fleet_node_class(host)
+        data["agents"] = []
+        data["slocks"] = []
+
+    c = ro()
+    claims = [dict(r) for r in c.execute(
+        "SELECT id,lane,title,claimed_by,subsystems FROM tasks WHERE status='claimed'")]
+    now_s = now.strftime("%Y-%m-%d %H:%M:%S")
+    slocks = [dict(r) for r in c.execute(
+        "SELECT scope,holder,note FROM slocks WHERE expires_at>=? ORDER BY scope", (now_s,))]
+    c.close()
+
+    for cl in claims:
+        for host in fleet_hosts_for_claim(cl["lane"], cl.get("subsystems")):
+            if host in nodes:
+                nodes[host]["agents"].append(
+                    {"id": cl["id"], "lane": cl["lane"], "title": cl["title"], "claimed_by": cl["claimed_by"]})
+    for sl in slocks:
+        for host in fleet_hosts_for_scope(sl["scope"]):
+            if host in nodes:
+                nodes[host]["slocks"].append(
+                    {"scope": sl["scope"], "holder": sl["holder"], "note": sl["note"]})
+
+    groups = []
+    for cls in FLEET_CLASS_ORDER:
+        if cls == "other":
+            hosts_in_class = sorted(h for h in nodes if fleet_node_class(h) == "other")
+        else:
+            hosts_in_class = [h for h in FLEET_CLASS_HOSTS[cls] if h in nodes]
+        if hosts_in_class:
+            groups.append({"class": cls, "label": FLEET_CLASS_LABELS[cls], "hosts": hosts_in_class})
+
+    return {"generated_at": generated_at, "staleness_s": staleness_s, "stale": stale,
+            "nodes": nodes, "groups": groups}
 
 
 # ---------- write APIs (wq CLI subprocess ONLY — never SQL) ----------
