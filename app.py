@@ -24,7 +24,7 @@ FLEET_SNAPSHOT = Path("/home/lumen/telemetry/fleet_telemetry.json")
 FLEET_STALE_S = 60  # 2x the collector's 30s timer cadence (T4 report's own guidance)
 LANE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 REPORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(md|diff|txt)$")
-WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_:-]{0,63}$")
 SENTINELS = ("TICKET_CLOSED", "BLOCKED", "CLAIM_ERROR")
 # wq#768 T7: 52 blocked / 23 naming Frank|gate|approval is the audit's own count
 # method (FLEET_OPS_AUDIT_2026-08-21.md F1) — mirrored here as the blocked-by-human
@@ -205,7 +205,13 @@ def fleet_hosts_for_scope(scope):
 def resolve_run(worker):
     """Map a wq claimed_by id to its _runs/<worker>.jsonl transcript, tolerating
     the registration suffix a session can grow after its spawn-time filename
-    was fixed (e.g. claimed_by fleet10-a9889e-699609, file fleet10-a9889e.jsonl)."""
+    was fixed (e.g. claimed_by fleet10-a9889e-699609, file fleet10-a9889e.jsonl).
+    wq#804: today's default claimed_by, host:pid (e.g. lumen:2581692, from wq's
+    f"{socket.gethostname()}:{os.getpid()}" fallback), never matches here — fworker
+    sessions don't write into this dir at all; their session_id/transcript lives
+    in foreman/_runs/wq<ticket>/attempt-N.json and ~/.claude/projects/*/<session_id>.jsonl,
+    outside this app's read scope. Returning None here is correct for those ids
+    (surfaces as a 404 "no transcript", not a crash) until that's wired up."""
     direct = RUNS / f"{worker}.jsonl"
     if direct.is_file():
         return direct
