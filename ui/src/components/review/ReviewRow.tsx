@@ -38,10 +38,16 @@ export function ReviewRow({ item, onOpen, onChanged }: ReviewRowProps) {
   async function approve() {
     setApproving(true)
     const label = `approve #${item.id}`
-    const ok =
-      item.status === 'blocked'
-        ? await runWrite(label, ticketRelease(item.id))
-        : await runWrite(label, ticketEdit(item.id, { gate: '' }))
+    let ok: boolean
+    if (item.status === 'blocked') {
+      ok = await runWrite(label, ticketRelease(item.id))
+    } else if (item.gate) {
+      ok = await runWrite(label, ticketEdit(item.id, { gate: '' }))
+    } else if (item.kinds.includes('user_lane')) {
+      ok = await runWrite(label, ticketEdit(item.id, { lane: 'build' }))
+    } else {
+      ok = await runWrite(label, ticketEdit(item.id, { gate: '' }))
+    }
     setApproving(false)
     if (ok) onChanged()
   }
