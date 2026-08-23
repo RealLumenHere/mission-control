@@ -714,6 +714,58 @@ def api_chat_sessions():
         return {"sessions": [], "chat_url": "https://chat.lumennode.uk", "error": str(e)}
 
 
+SENTINEL = Path("/home/lumen/sentinel")
+
+
+@app.get("/api/external-links")
+def api_external_links():
+    """Sidebar links, derived from the live service inventory (wq#770).
+
+    MC used to carry a hardcoded four-link list that went stale the moment a
+    service moved. This reads the same inventory the home dashboard is
+    generated from, so both surfaces drift together or not at all.
+    """
+    fallback = [
+        {"label": "Scribe", "href": "https://scribe.lumennode.uk"},
+        {"label": "Proposals", "href": "https://propose.lumennode.uk"},
+        {"label": "Bench", "href": "https://bench.lumennode.uk"},
+        {"label": "Chat", "href": "https://chat.lumennode.uk"},
+    ]
+    try:
+        inv = json.loads((SENTINEL / "ui_inventory.json").read_text())
+    except Exception as e:
+        return {"links": fallback, "source": "fallback", "error": str(e)}
+    try:
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+        # ui-inventory has no .py suffix, so the loader must be named explicitly.
+        loader = SourceFileLoader("ui_inventory", "/home/lumen/bin/ui-inventory")
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        rows = mod.presentable(inv)
+    except Exception as e:
+        return {"links": fallback, "source": "fallback", "error": str(e)}
+    links = [{"label": r["title"], "href": r["url"], "group": r["group"],
+              "drawer": r["drawer"]}
+             for r in sorted(rows, key=lambda r: (r["drawer"], r["title"].lower()))]
+    return {"links": links, "source": "inventory",
+            "generated_at": inv.get("generated_at")}
+
+
+@app.get("/api/ui-drift")
+def api_ui_drift():
+    """Latest dashboards-vs-reality result, published for the MC surface."""
+    try:
+        rep = json.loads((SENTINEL / "ui_drift_latest.json").read_text())
+    except Exception as e:
+        return {"ok": False, "error": str(e), "findings": [], "counts": {}}
+    return {"ok": True, "generated_at": rep.get("generated_at"),
+            "runs": rep.get("runs"), "counts": rep.get("counts", {}),
+            "findings": rep.get("findings", []),
+            "new_keys": rep.get("new_keys", [])}
+
+
 INDEX = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mission Control</title><style>

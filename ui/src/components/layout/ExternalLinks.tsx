@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronRightIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -8,8 +8,35 @@ interface ExternalLinksProps {
   proposalsPending: number | null
 }
 
+interface Link {
+  label: string
+  href: string
+}
+
+/**
+ * Sidebar links come from /api/external-links, which derives them from the live
+ * service inventory (wq#770) — the same source the home dashboard is generated
+ * from. EXTERNAL_LINKS stays as the fallback so the sidebar still renders if the
+ * inventory is missing or the endpoint is down.
+ */
 export function ExternalLinks({ proposalsPending }: ExternalLinksProps) {
   const [open, setOpen] = useState(false)
+  const [links, setLinks] = useState<readonly Link[]>(EXTERNAL_LINKS)
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/external-links')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d) => {
+        if (alive && Array.isArray(d?.links) && d.links.length) setLinks(d.links)
+      })
+      .catch(() => {
+        /* keep the static fallback */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   return (
     <div className="flex flex-col gap-1">
@@ -22,9 +49,9 @@ export function ExternalLinks({ proposalsPending }: ExternalLinksProps) {
       </button>
       {open && (
         <div className="flex flex-col gap-0.5 pl-2">
-          {EXTERNAL_LINKS.map((link) => (
+          {links.map((link) => (
             <a
-              key={link.label}
+              key={link.href}
               href={link.href}
               target="_blank"
               rel="noreferrer"
