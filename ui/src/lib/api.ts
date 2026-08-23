@@ -98,7 +98,7 @@ export const EXTERNAL_LINKS = [
 
 // ---- tickets (T2) ----
 
-export type TicketStatus = TaskStatus | 'rejected'
+export type TicketStatus = TaskStatus | 'rejected' | 'frank_gated' | 'pending_review'
 
 export interface Ticket {
   id: number
@@ -173,7 +173,7 @@ export interface WriteResult {
 
 // ---- review queue (T7) ----
 
-export type ReviewKind = 'blocked_human' | 'user_lane' | 'gated'
+export type ReviewKind = 'blocked_human' | 'user_lane' | 'gated' | 'frank_decision'
 
 export interface ReviewDownstream {
   id: number
@@ -334,6 +334,10 @@ export function ticketBlock(id: number, reason: string): Promise<WriteResult> {
 
 export function ticketRelease(id: number): Promise<WriteResult> {
   return postJSON<WriteResult>(`/api/ticket/${id}/release`, {})
+}
+
+export function ticketAnswer(id: number, text: string): Promise<WriteResult> {
+  return postJSON<WriteResult>(`/api/ticket/${id}/answer`, { text })
 }
 
 export function projectNew(p: ProjectNewInput): Promise<WriteResult> {

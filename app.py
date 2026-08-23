@@ -339,7 +339,9 @@ def api_review():
     Aggregates read-only: blocked tickets whose notes name Frank/gate/approval
     (REVIEW_HUMAN_RE — mirrors FLEET_OPS_AUDIT_2026-08-21.md's own count method),
     the `user` lane in full (Frank-only by wq convention — wq claim refuses it),
-    and open/claimed/blocked tickets with an unmet --gate precondition. A ticket
+    open/claimed/blocked tickets with an unmet --gate precondition, and wq#662
+    gate_type=frank_decision tickets awaiting Frank (status frank_gated with no
+    decision_prompt yet, frank_gated post-reject, or pending_review). A ticket
     that's merely open-dependent on another ticket's deps is NOT included — it's
     waiting on work, not on Frank. `downstream` is the other non-done tickets that
     list this one in their own deps, i.e. what a decision here unblocks."""
@@ -364,13 +366,25 @@ def api_review():
             kinds.append("gated")
         if r["status"] == "blocked" and REVIEW_HUMAN_RE.search(r["notes"] or ""):
             kinds.append("blocked_human")
+        if r.get("gate_type") == "frank_decision" and r["status"] in ("frank_gated", "pending_review"):
+            kinds.append("frank_decision")
         if not kinds:
             continue
 
         note_line = next((ln.strip() for ln in (r["notes"] or "").splitlines() if ln.strip()), "")
-        reason = (note_line or
-                  (gate_reason if "gated" in kinds else "") or
-                  ("parked in user lane — Frank-only" if "user_lane" in kinds else "awaiting decision"))
+        if "frank_decision" in kinds:
+            if r["status"] == "pending_review" and r["frank_response"]:
+                reason = "answered — pending orchestrator review"
+            elif r["status"] == "frank_gated" and r["decision_prompt"]:
+                reason = f"REJECTED: {r['review_reason'] or 'no reason given'}"
+            elif r["decision_prompt"]:
+                reason = r["decision_prompt"]
+            else:
+                reason = "awaiting orchestrator decision prompt"
+        else:
+            reason = (note_line or
+                      (gate_reason if "gated" in kinds else "") or
+                      ("parked in user lane — Frank-only" if "user_lane" in kinds else "awaiting decision"))
 
         try:
             created = datetime.datetime.strptime(r["created_at"], _FMT).replace(tzinfo=datetime.timezone.utc)
@@ -392,7 +406,9 @@ def api_review():
             "cost_of_delay": round(cost, 2),
         })
 
-    items.sort(key=lambda x: x["cost_of_delay"], reverse=True)
+    # wq#663: a direct decision (Frank types an answer, one click) beats a generic
+    # approve/reject item at the same cost-of-delay — surface those first.
+    items.sort(key=lambda x: ("frank_decision" not in x["kinds"], -x["cost_of_delay"]))
     return {"now": now, "items": items, "count": len(items)}
 
 @app.get("/api/lane/{lane}")
@@ -409,7 +425,10 @@ def api_lane(lane: str, include_done: int = 0):
         r["effective_pri"] = mc_effective_pri(r.get("pri", 2), r.get("status", ""),
                                               r.get("gate", ""), r.get("created_at", ""))
     c.close()
-    _STATUS_ORDER = {"claimed": 0, "open": 1, "blocked": 2, "done": 3}
+    # wq#663: frank_gated/pending_review (decision-gate states) sort with claimed —
+    # they're actionable-now, not parked like a generic block. Default 3 keeps any
+    # future/unknown status out of the way, grouped with done instead of floating up.
+    _STATUS_ORDER = {"claimed": 0, "frank_gated": 0, "pending_review": 0, "open": 1, "blocked": 2, "done": 3}
     rows.sort(key=lambda r: (_STATUS_ORDER.get(r["status"], 3),
                              r["effective_pri"], r.get("created_at") or ""))
     done = [r for r in rows if r["status"] == "done"]
@@ -593,6 +612,9 @@ class TicketEdit(BaseModel):
 class Reason(BaseModel):
     reason: str = ""; notes: str = ""
 
+class Answer(BaseModel):
+    text: str
+
 class ProjectNew(BaseModel):
     lane: str; project_dir: str; description: str; service_lock: str = ""
 
@@ -633,6 +655,16 @@ def ticket_block(tid: int, r: Reason):
 @app.post("/api/ticket/{tid}/release")
 def ticket_release(tid: int):
     return run([WQ, "release", str(tid)])
+
+@app.post("/api/ticket/{tid}/answer")
+def ticket_answer(tid: int, a: Answer):
+    """wq#662/wq#663: Frank's free-text response on a pending_review decision-gate
+    ticket. `wq answer` itself enforces the state (pending_review + decision_prompt
+    set) and refuses blank text — this just requires non-blank client-side too so
+    the failure surfaces as a form validation, not a round trip."""
+    if not a.text.strip():
+        return JSONResponse({"ok": False, "stderr": "response text required"}, status_code=400)
+    return run([WQ, "answer", str(tid), a.text])
 
 @app.post("/api/project")
 def project_new(p: ProjectNew):

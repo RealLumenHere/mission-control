@@ -4,6 +4,7 @@ import type { AgentsResponse, Ticket } from '@/lib/api'
 import { MetadataTab } from '@/components/xray/MetadataTab'
 import { TerminalTab } from '@/components/xray/TerminalTab'
 import { ReportsTab } from '@/components/xray/ReportsTab'
+import { DecisionTab } from '@/components/xray/DecisionTab'
 
 interface XRayDrawerProps {
   ticket: Ticket | null
@@ -27,13 +28,23 @@ export function XRayDrawer({ ticket, now, agents, onOpenChange, onNavigate, onCh
               <SheetDescription>{ticket.lane}</SheetDescription>
             </SheetHeader>
 
-            <Tabs defaultValue="metadata" className="flex flex-1 flex-col overflow-hidden px-4 pb-4">
+            <Tabs
+              key={ticket.id}
+              defaultValue={ticket.gate_type === 'frank_decision' ? 'decision' : 'metadata'}
+              className="flex flex-1 flex-col overflow-hidden px-4 pb-4"
+            >
               <TabsList>
+                {ticket.gate_type === 'frank_decision' && <TabsTrigger value="decision">Decision</TabsTrigger>}
                 <TabsTrigger value="metadata">Metadata</TabsTrigger>
                 <TabsTrigger value="terminal">Terminal</TabsTrigger>
                 <TabsTrigger value="reports">Reports</TabsTrigger>
               </TabsList>
 
+              {ticket.gate_type === 'frank_decision' && (
+                <TabsContent value="decision" className="overflow-auto">
+                  <DecisionTab ticket={ticket} onChanged={onChanged} />
+                </TabsContent>
+              )}
               <TabsContent value="metadata" className="overflow-auto">
                 <MetadataTab ticket={ticket} now={now} onNavigate={onNavigate} onChanged={onChanged} />
               </TabsContent>

@@ -16,6 +16,8 @@ const DOT: Record<string, string> = {
   'open-dependent': 'bg-status-open-dependent',
   done: 'bg-status-done',
   rejected: 'bg-status-blocked',
+  frank_gated: 'bg-rust',
+  pending_review: 'bg-rust',
 }
 
 const TEXT: Record<string, string> = {
@@ -25,6 +27,8 @@ const TEXT: Record<string, string> = {
   'open-dependent': 'text-status-open-dependent',
   done: 'text-status-done',
   rejected: 'text-status-blocked',
+  frank_gated: 'text-rust',
+  pending_review: 'text-rust',
 }
 
 interface StatusTagProps {
@@ -45,7 +49,7 @@ export function StatusTag({ ticket }: StatusTagProps) {
       )}
     >
       <span className={cn('size-1.5 rounded-full', DOT[status])} />
-      {status}
+      {status.replace(/_/g, ' ')}
     </span>
   )
 

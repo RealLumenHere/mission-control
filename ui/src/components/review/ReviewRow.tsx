@@ -13,12 +13,14 @@ const KIND_LABEL: Record<ReviewKind, string> = {
   blocked_human: 'blocked · human',
   user_lane: 'user lane',
   gated: 'gate unmet',
+  frank_decision: 'decision',
 }
 
 const KIND_CLASS: Record<ReviewKind, string> = {
   blocked_human: 'text-status-blocked',
   gated: 'text-status-claimed',
   user_lane: 'text-rust',
+  frank_decision: 'text-rust',
 }
 
 interface ReviewRowProps {
@@ -31,6 +33,7 @@ export function ReviewRow({ item, onOpen, onChanged }: ReviewRowProps) {
   const [rejectOpen, setRejectOpen] = useState(false)
   const [deferOpen, setDeferOpen] = useState(false)
   const [approving, setApproving] = useState(false)
+  const isDecision = item.kinds.includes('frank_decision')
 
   async function approve() {
     setApproving(true)
@@ -92,52 +95,64 @@ export function ReviewRow({ item, onOpen, onChanged }: ReviewRowProps) {
         </div>
       </div>
 
-      <div className="flex shrink-0 gap-1.5">
-        <Button size="sm" disabled={approving} onClick={approve}>
-          Approve
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => setDeferOpen(true)}>
-          Defer
-        </Button>
-        <Button size="sm" variant="destructive" onClick={() => setRejectOpen(true)}>
-          Reject
-        </Button>
-      </div>
+      {isDecision ? (
+        // wq#663: the real action here is answering the decision prompt, which
+        // needs its own text box (X-Ray Decision tab) — not a generic block/gate op.
+        <div className="flex shrink-0">
+          <Button size="sm" onClick={() => onOpen(item.lane, item.id)}>
+            Answer
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="flex shrink-0 gap-1.5">
+            <Button size="sm" disabled={approving} onClick={approve}>
+              Approve
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setDeferOpen(true)}>
+              Defer
+            </Button>
+            <Button size="sm" variant="destructive" onClick={() => setRejectOpen(true)}>
+              Reject
+            </Button>
+          </div>
 
-      <ReasonDialog
-        open={rejectOpen}
-        onOpenChange={setRejectOpen}
-        title={`Reject #${item.id}`}
-        description="Blocks the ticket with this reason via wq block — releases held subsystem locks."
-        label="reason"
-        placeholder="why this is a no"
-        required
-        confirmLabel="Reject"
-        destructive
-        onConfirm={(reason) =>
-          runWrite(`reject #${item.id}`, ticketBlock(item.id, `REJECTED: ${reason}`)).then((ok) => {
-            if (ok) onChanged()
-            return ok
-          })
-        }
-      />
+          <ReasonDialog
+            open={rejectOpen}
+            onOpenChange={setRejectOpen}
+            title={`Reject #${item.id}`}
+            description="Blocks the ticket with this reason via wq block — releases held subsystem locks."
+            label="reason"
+            placeholder="why this is a no"
+            required
+            confirmLabel="Reject"
+            destructive
+            onConfirm={(reason) =>
+              runWrite(`reject #${item.id}`, ticketBlock(item.id, `REJECTED: ${reason}`)).then((ok) => {
+                if (ok) onChanged()
+                return ok
+              })
+            }
+          />
 
-      <ReasonDialog
-        open={deferOpen}
-        onOpenChange={setDeferOpen}
-        title={`Defer #${item.id}`}
-        description="Blocks the ticket with this reason via wq block — revisit later, releases held subsystem locks."
-        label="reason"
-        placeholder="not now — revisit when…"
-        required
-        confirmLabel="Defer"
-        onConfirm={(reason) =>
-          runWrite(`defer #${item.id}`, ticketBlock(item.id, `DEFERRED: ${reason}`)).then((ok) => {
-            if (ok) onChanged()
-            return ok
-          })
-        }
-      />
+          <ReasonDialog
+            open={deferOpen}
+            onOpenChange={setDeferOpen}
+            title={`Defer #${item.id}`}
+            description="Blocks the ticket with this reason via wq block — revisit later, releases held subsystem locks."
+            label="reason"
+            placeholder="not now — revisit when…"
+            required
+            confirmLabel="Defer"
+            onConfirm={(reason) =>
+              runWrite(`defer #${item.id}`, ticketBlock(item.id, `DEFERRED: ${reason}`)).then((ok) => {
+                if (ok) onChanged()
+                return ok
+              })
+            }
+          />
+        </>
+      )}
     </div>
   )
 }
