@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 
-import type { AgentsResponse, FleetResponse, ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
+import type { AgentsResponse, FleetResponse, QueueResponse, ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
 import { useLane } from '@/hooks/useLane'
 import { LaneStatusCards } from '@/components/workspace/LaneStatusCards'
 import { TicketTable } from '@/components/workspace/TicketTable'
 import { AddTicketDialog } from '@/components/workspace/AddTicketDialog'
 import { XRayDrawer } from '@/components/xray/XRayDrawer'
 import { ReviewQueue } from '@/components/review/ReviewQueue'
+import { UpNextQueue } from '@/components/workspace/UpNextQueue'
 import { displayStatus } from '@/components/workspace/StatusTag'
 
 const LANE_POLL_MS = 5000
@@ -15,6 +16,7 @@ const LANE_POLL_MS = 5000
 interface WorkspaceViewProps {
   state: StateResponse | null
   review: ReviewResponse | null
+  queue: QueueResponse | null
   agents: AgentsResponse | null
   onReviewChanged: () => void
   selectedLane: string | null
@@ -41,6 +43,7 @@ function HostFilterChip({ host, onClear }: { host: string; onClear: () => void }
 export function WorkspaceView({
   state,
   review,
+  queue,
   agents,
   onReviewChanged,
   selectedLane,
@@ -147,6 +150,11 @@ export function WorkspaceView({
       <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
         <ReviewQueue review={review} onOpenTicket={navigate} onChanged={onReviewChanged} />
 
+        {/* wq#1365: the queue itself, not just per-lane counts — this is the
+            "what's actually in line to get done" view Frank has to click into
+            every lane to reconstruct otherwise. */}
+        <UpNextQueue queue={queue} onOpenTicket={navigate} />
+
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {laneNames.map((l) => {
             const c = state?.lanes[l] ?? {}
@@ -166,9 +174,6 @@ export function WorkspaceView({
               </button>
             )
           })}
-        </div>
-        <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-ink-2 text-[12px] text-sand/60">
-          select a lane to view its ticket workspace
         </div>
       </div>
     )

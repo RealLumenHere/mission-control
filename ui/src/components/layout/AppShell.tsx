@@ -7,12 +7,13 @@ import { WorkspaceView } from '@/components/workspace/WorkspaceView'
 import { FleetView } from '@/components/fleet/FleetView'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { usePoll } from '@/hooks/usePoll'
-import { fetchAgents, fetchFleet, fetchReview, fetchState } from '@/lib/api'
+import { fetchAgents, fetchFleet, fetchQueue, fetchReview, fetchState } from '@/lib/api'
 
 const STATE_POLL_MS = 5000
 const AGENTS_POLL_MS = 5000
 const REVIEW_POLL_MS = 5000
 const FLEET_POLL_MS = 10000
+const QUEUE_POLL_MS = 5000
 
 export function AppShell() {
   const [view, setView] = useState<ArenaView>('workspace')
@@ -35,6 +36,7 @@ export function AppShell() {
   const { data: agents } = usePoll(fetchAgents, AGENTS_POLL_MS)
   const { data: review, refetch: refetchReview } = usePoll(fetchReview, REVIEW_POLL_MS)
   const { data: fleet } = usePoll(fetchFleet, FLEET_POLL_MS)
+  const { data: queue } = usePoll(fetchQueue, QUEUE_POLL_MS)
 
   function selectHost(host: string) {
     setHostFilter((cur) => {
@@ -81,6 +83,7 @@ export function AppShell() {
             <WorkspaceView
               state={state}
               review={review}
+              queue={queue}
               agents={agents}
               onReviewChanged={refetchReview}
               selectedLane={selectedLane}

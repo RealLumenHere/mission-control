@@ -212,6 +212,18 @@ export function fetchLane(lane: string, includeDone = false): Promise<LaneRespon
   return getJSON<LaneResponse>(`/api/lane/${encodeURIComponent(lane)}?include_done=${includeDone ? 1 : 0}`)
 }
 
+// wq#1365 — cross-lane "up next" queue for the landing page: every open/claimed
+// ticket in one call instead of one /api/lane fetch per lane.
+export interface QueueResponse {
+  now: string
+  tickets: Ticket[]
+  count: number
+}
+
+export function fetchQueue(): Promise<QueueResponse> {
+  return getJSON<QueueResponse>('/api/queue')
+}
+
 export function fetchTicketRef(id: number): Promise<TicketRef> {
   return getJSON<TicketRef>(`/api/ticket/${id}`)
 }

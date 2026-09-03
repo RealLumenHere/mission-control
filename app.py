@@ -417,6 +417,28 @@ def api_review():
     items.sort(key=lambda x: ("frank_decision" not in x["kinds"], -x["cost_of_delay"]))
     return {"now": now, "items": items, "count": len(items)}
 
+@app.get("/api/queue")
+def api_queue():
+    """wq#1365 — landing-page 'up next' queue: every open/claimed ticket across
+    every lane in one call, so the landing page doesn't need one /api/lane fetch
+    per lane just to answer "what's actually queued". Excludes blocked/
+    frank_gated/pending_review/done — the first three already surface in
+    /api/review (they're waiting on a human decision, not next-in-line for an
+    agent), done is irrelevant to "up next". Same effective_pri/deps_met/sort
+    shape as /api/lane so the frontend can reuse StatusTag etc. unmodified."""
+    c = ro()
+    rows = [dict(r) for r in c.execute("SELECT * FROM tasks WHERE status IN ('open','claimed')")]
+    for r in rows:
+        r["deps_met"] = deps_met(c, r["deps"])
+        r["effective_pri"] = mc_effective_pri(r.get("pri", 2), r.get("status", ""),
+                                              r.get("gate", ""), r.get("created_at", ""))
+    c.close()
+    _STATUS_ORDER = {"claimed": 0, "open": 1}
+    rows.sort(key=lambda r: (_STATUS_ORDER.get(r["status"], 2),
+                             r["effective_pri"], r.get("created_at") or ""))
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return {"now": now, "tickets": rows, "count": len(rows)}
+
 @app.get("/api/lane/{lane}")
 def api_lane(lane: str, include_done: int = 0):
     if not LANE_RE.match(lane):
