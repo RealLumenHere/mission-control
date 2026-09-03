@@ -8,6 +8,7 @@ import { FleetView } from '@/components/fleet/FleetView'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { usePoll } from '@/hooks/usePoll'
 import { fetchAgents, fetchFleet, fetchQueue, fetchReview, fetchState } from '@/lib/api'
+import { splitReview } from '@/lib/review'
 
 const STATE_POLL_MS = 5000
 const AGENTS_POLL_MS = 5000
@@ -64,7 +65,7 @@ export function AppShell() {
         <Sidebar
           state={state}
           agents={agents}
-          reviewCount={review?.count ?? null}
+          reviewCount={review ? splitReview(review).decisions.length : null}
           selectedLane={selectedLane}
           onSelectLane={setSelectedLane}
           onProjectAdded={refetchState}

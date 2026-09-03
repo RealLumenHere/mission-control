@@ -8,8 +8,10 @@ import { TicketTable } from '@/components/workspace/TicketTable'
 import { AddTicketDialog } from '@/components/workspace/AddTicketDialog'
 import { XRayDrawer } from '@/components/xray/XRayDrawer'
 import { ReviewQueue } from '@/components/review/ReviewQueue'
+import { UserLaneParked } from '@/components/review/UserLaneParked'
 import { UpNextQueue } from '@/components/workspace/UpNextQueue'
 import { displayStatus } from '@/components/workspace/StatusTag'
+import { splitReview } from '@/lib/review'
 
 const LANE_POLL_MS = 5000
 
@@ -146,9 +148,13 @@ export function WorkspaceView({
       )
     }
 
+    const { decisions, parked } = splitReview(review)
+
     return (
       <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
-        <ReviewQueue review={review} onOpenTicket={navigate} onChanged={onReviewChanged} />
+        <ReviewQueue items={decisions} onOpenTicket={navigate} onChanged={onReviewChanged} />
+
+        <UserLaneParked items={parked} onOpenTicket={navigate} onChanged={onReviewChanged} />
 
         {/* wq#1365: the queue itself, not just per-lane counts — this is the
             "what's actually in line to get done" view Frank has to click into

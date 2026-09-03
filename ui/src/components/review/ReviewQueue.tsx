@@ -1,18 +1,17 @@
 import { useState } from 'react'
 
-import type { ReviewResponse } from '@/lib/api'
+import type { ReviewItem } from '@/lib/api'
 import { ReviewRow } from '@/components/review/ReviewRow'
 import { cn } from '@/lib/utils'
 
 interface ReviewQueueProps {
-  review: ReviewResponse | null
+  items: ReviewItem[]
   onOpenTicket: (lane: string, id: number) => void
   onChanged: () => void
 }
 
-export function ReviewQueue({ review, onOpenTicket, onChanged }: ReviewQueueProps) {
+export function ReviewQueue({ items: all, onOpenTicket, onChanged }: ReviewQueueProps) {
   const [decisionsOnly, setDecisionsOnly] = useState(false)
-  const all = review?.items ?? []
   const decisionCount = all.filter((i) => i.kinds.includes('frank_decision')).length
   const items = decisionsOnly ? all.filter((i) => i.kinds.includes('frank_decision')) : all
 
