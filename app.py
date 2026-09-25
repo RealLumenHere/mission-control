@@ -737,9 +737,9 @@ def api_chat_sessions():
                     "created": parts[1],
                     "windows": int(parts[2]) if parts[2].isdigit() else 1,
                 })
-        return {"sessions": sessions, "chat_url": "https://chat.lumennode.uk"}
+        return {"sessions": sessions, "chat_url": "https://claude.lumennode.uk"}
     except Exception as e:
-        return {"sessions": [], "chat_url": "https://chat.lumennode.uk", "error": str(e)}
+        return {"sessions": [], "chat_url": "https://claude.lumennode.uk", "error": str(e)}
 
 
 SENTINEL = Path("/home/lumen/sentinel")
@@ -907,10 +907,10 @@ h+=await chatSessionsSection();
 $("#main").innerHTML=h;}
 
 async function chatSessionsSection(){
-const cs=await api("/api/chat-sessions").catch(()=>({sessions:[],chat_url:"https://chat.lumennode.uk"}));
+const cs=await api("/api/chat-sessions").catch(()=>({sessions:[],chat_url:"https://claude.lumennode.uk"}));
 let h='<section><h2>Claude Chat Sessions <a href="'+esc(cs.chat_url)+'" target="_blank" style="font-size:11px;text-transform:none;letter-spacing:0;margin-left:6px">Open terminal ↗</a></h2>';
 if(cs.error)h+=`<div class="muted">error: ${esc(cs.error)}</div>`;
-else if(!cs.sessions||!cs.sessions.length)h+='<div class="muted">no active sessions — <a href="'+esc(cs.chat_url)+'" target="_blank">open chat.lumennode.uk</a> to start one</div>';
+else if(!cs.sessions||!cs.sessions.length)h+='<div class="muted">no active sessions — <a href="'+esc(cs.chat_url)+'" target="_blank">open claude.lumennode.uk</a> to start one</div>';
 else{h+='<table><tr><th>session</th><th>created</th><th>windows</th><th></th></tr>';
 for(const s of cs.sessions)h+=`<tr><td><code>${esc(s.name)}</code></td><td class="muted">${esc(s.created)}</td><td class="muted">${esc(String(s.windows))}</td><td><a href="${esc(cs.chat_url)}" target="_blank" class="button small">attach</a></td></tr>`;
 h+='</table>';}
