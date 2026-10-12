@@ -208,6 +208,27 @@ export function fetchReview(): Promise<ReviewResponse> {
   return getJSON<ReviewResponse>('/api/review')
 }
 
+// ---- research proposals awaiting Frank (wq#3771) ----
+
+export interface ResearchItem {
+  id: number
+  title: string
+  proposal: string
+  detail: string | null
+  decision_prompt: string | null
+  created_at: string | null
+}
+
+export interface ResearchResponse {
+  items: ResearchItem[]
+  retry: Pick<ResearchItem, 'id' | 'title' | 'proposal' | 'created_at'>[]
+  count: number
+}
+
+export function fetchResearch(): Promise<ResearchResponse> {
+  return getJSON<ResearchResponse>('/api/research')
+}
+
 export function fetchLane(lane: string, includeDone = false): Promise<LaneResponse> {
   return getJSON<LaneResponse>(`/api/lane/${encodeURIComponent(lane)}?include_done=${includeDone ? 1 : 0}`)
 }
@@ -350,6 +371,14 @@ export function ticketRelease(id: number): Promise<WriteResult> {
 
 export function ticketAnswer(id: number, text: string): Promise<WriteResult> {
   return postJSON<WriteResult>(`/api/ticket/${id}/answer`, { text })
+}
+
+export function researchApprove(id: number, text: string): Promise<WriteResult> {
+  return postJSON<WriteResult>(`/api/research/${id}/approve`, { text })
+}
+
+export function researchReject(id: number, text: string, rejectClass: string): Promise<WriteResult> {
+  return postJSON<WriteResult>(`/api/research/${id}/reject`, { text, reject_class: rejectClass })
 }
 
 export function projectNew(p: ProjectNewInput): Promise<WriteResult> {

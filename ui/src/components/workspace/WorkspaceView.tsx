@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 
-import type { AgentsResponse, FleetResponse, QueueResponse, ReviewResponse, StateResponse, TaskStatus } from '@/lib/api'
+import type {
+  AgentsResponse,
+  FleetResponse,
+  QueueResponse,
+  ResearchResponse,
+  ReviewResponse,
+  StateResponse,
+  TaskStatus,
+} from '@/lib/api'
 import { useLane } from '@/hooks/useLane'
 import { LaneStatusCards } from '@/components/workspace/LaneStatusCards'
 import { TicketTable } from '@/components/workspace/TicketTable'
@@ -9,6 +17,7 @@ import { AddTicketDialog } from '@/components/workspace/AddTicketDialog'
 import { XRayDrawer } from '@/components/xray/XRayDrawer'
 import { ReviewQueue } from '@/components/review/ReviewQueue'
 import { ReviewSection } from '@/components/review/ReviewSection'
+import { ResearchApprovals } from '@/components/review/ResearchApprovals'
 import { UpNextQueue } from '@/components/workspace/UpNextQueue'
 import { displayStatus } from '@/components/workspace/StatusTag'
 import { splitReview } from '@/lib/review'
@@ -18,6 +27,7 @@ const LANE_POLL_MS = 5000
 interface WorkspaceViewProps {
   state: StateResponse | null
   review: ReviewResponse | null
+  research: ResearchResponse | null
   queue: QueueResponse | null
   agents: AgentsResponse | null
   onReviewChanged: () => void
@@ -45,6 +55,7 @@ function HostFilterChip({ host, onClear }: { host: string; onClear: () => void }
 export function WorkspaceView({
   state,
   review,
+  research,
   queue,
   agents,
   onReviewChanged,
@@ -149,10 +160,19 @@ export function WorkspaceView({
     }
 
     const { decisions, buckets } = splitReview(review)
+    // A research proposal's Answer button would only run `wq answer`, never the
+    // accept/reject step — those rows act from ResearchApprovals alone.
+    const researchIds = new Set((research?.items ?? []).map((r) => r.id))
 
     return (
       <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
-        <ReviewQueue items={decisions} onOpenTicket={navigate} onChanged={onReviewChanged} />
+        <ResearchApprovals research={research} onChanged={onReviewChanged} />
+
+        <ReviewQueue
+          items={decisions.filter((d) => !researchIds.has(d.id))}
+          onOpenTicket={navigate}
+          onChanged={onReviewChanged}
+        />
 
         {buckets.map((b) => (
           <ReviewSection

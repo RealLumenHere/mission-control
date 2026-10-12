@@ -7,7 +7,7 @@ import { WorkspaceView } from '@/components/workspace/WorkspaceView'
 import { FleetView } from '@/components/fleet/FleetView'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { usePoll } from '@/hooks/usePoll'
-import { fetchAgents, fetchFleet, fetchQueue, fetchReview, fetchState } from '@/lib/api'
+import { fetchAgents, fetchFleet, fetchQueue, fetchResearch, fetchReview, fetchState } from '@/lib/api'
 import { splitReview } from '@/lib/review'
 
 const STATE_POLL_MS = 5000
@@ -36,7 +36,8 @@ export function AppShell() {
   const { data: state, refetch: refetchState } = usePoll(fetchState, STATE_POLL_MS)
   const { data: agents } = usePoll(fetchAgents, AGENTS_POLL_MS)
   const { data: review, refetch: refetchReview } = usePoll(fetchReview, REVIEW_POLL_MS)
-  const { data: fleet } = usePoll(fetchFleet, FLEET_POLL_MS)
+  const { data: research, refetch: refetchResearch } = usePoll(fetchResearch, REVIEW_POLL_MS)
+  const { data: fleet }= usePoll(fetchFleet, FLEET_POLL_MS)
   const { data: queue } = usePoll(fetchQueue, QUEUE_POLL_MS)
 
   function selectHost(host: string) {
@@ -84,9 +85,13 @@ export function AppShell() {
             <WorkspaceView
               state={state}
               review={review}
+              research={research}
               queue={queue}
               agents={agents}
-              onReviewChanged={refetchReview}
+              onReviewChanged={() => {
+                refetchReview()
+                refetchResearch()
+              }}
               selectedLane={selectedLane}
               onSelectLane={setSelectedLane}
               fleet={fleet}

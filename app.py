@@ -12,8 +12,13 @@ from pydantic import BaseModel
 
 WQ = "/home/lumen/bin/wq"
 LANE_INIT = "/home/lumen/bin/wq-lane-init"
+# wq#3771: research-proposal rejection is bridge.py's, not `wq review reject` — see
+# foreman research/MC_APPROVAL_PANEL_CONTRACT.md §3.
+RESEARCH_BRIDGE = "/home/lumen/foreman/research/bridge.py"
 WQDIR = Path("/home/lumen/agents/work-queue")
-DB = WQDIR / "queue.db"
+# Same WQ_DB override wq and bridge.py honor, so reads and the subprocess writes
+# (which inherit this env) always hit one database.
+DB = Path(os.environ.get("WQ_DB", WQDIR / "queue.db"))
 REPORTS = WQDIR / "reports"
 RUNS = WQDIR / "_runs"
 GOV_STATE = Path("/home/lumen/foreman/state.json")
@@ -31,6 +36,9 @@ SENTINELS = ("TICKET_CLOSED", "BLOCKED", "CLAIM_ERROR")
 # classifier so the review queue's count is reproducible against that finding.
 REVIEW_HUMAN_RE = re.compile(r"\b(frank|gate|approval)\b", re.I)
 PROPOSALS_SUMMARY_URL = "http://127.0.0.1:8110/api/summary"
+# Mirrors foreman research/bridge.py TITLE_PREFIX and research/ledger.py CLASS_RE.
+RESEARCH_PREFIX = "research: "
+REJECT_CLASS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 app = FastAPI(title="Lumen Mission Control", docs_url=None, redoc_url=None)
 
@@ -417,6 +425,27 @@ def api_review():
     items.sort(key=lambda x: ("frank_decision" not in x["kinds"], -x["cost_of_delay"]))
     return {"now": now, "items": items, "count": len(items)}
 
+@app.get("/api/research")
+def api_research():
+    """wq#3771 — research proposals awaiting Frank (foreman
+    research/MC_APPROVAL_PANEL_CONTRACT.md §1). bridge.py submit() runs `wq decide`
+    right after `wq add --frank-gated`, so the actionable row is pending_review.
+    A frank_gated row with no decision_prompt means that decide failed: `wq answer`
+    would refuse it, so it's listed apart as awaiting retry, without actions."""
+    c = ro()
+    items = [dict(r) for r in c.execute(
+        "SELECT id,title,detail,decision_prompt,created_at FROM tasks "
+        "WHERE gate_type='frank_decision' AND status='pending_review' "
+        "AND title LIKE 'research: %' ORDER BY id")]
+    retry = [dict(r) for r in c.execute(
+        "SELECT id,title,created_at FROM tasks "
+        "WHERE gate_type='frank_decision' AND status='frank_gated' "
+        "AND decision_prompt IS NULL AND title LIKE 'research: %' ORDER BY id")]
+    c.close()
+    for r in items + retry:
+        r["proposal"] = r["title"][len(RESEARCH_PREFIX):] if r["title"].startswith(RESEARCH_PREFIX) else r["title"]
+    return {"items": items, "retry": retry, "count": len(items)}
+
 @app.get("/api/queue")
 def api_queue():
     """wq#1365 — landing-page 'up next' queue: every open/claimed ticket across
@@ -693,6 +722,43 @@ def ticket_answer(tid: int, a: Answer):
     if not a.text.strip():
         return JSONResponse({"ok": False, "stderr": "response text required"}, status_code=400)
     return run([WQ, "answer", str(tid), a.text])
+
+class ResearchVerdict(BaseModel):
+    text: str
+    reject_class: str = ""
+
+def research_verdict(tid, text, then):
+    """Contract §3: record Frank's text with `wq answer` first (it refuses anything
+    not pending_review with a decision_prompt), then run the terminal step. Stops at
+    the first refusal; a retry is safe since `wq answer` just overwrites the text."""
+    if not text.strip():
+        return JSONResponse({"ok": False, "stderr": "response text required"}, status_code=400)
+    c = ro()
+    r = c.execute("SELECT title,gate_type FROM tasks WHERE id=?", (tid,)).fetchone()
+    c.close()
+    if not r or r["gate_type"] != "frank_decision" or not r["title"].startswith(RESEARCH_PREFIX):
+        return JSONResponse({"ok": False, "stderr": f"wq#{tid} is not a research proposal"}, status_code=400)
+    ans = run([WQ, "answer", str(tid), text])
+    if not ans["ok"]:
+        return ans
+    res = run(then)
+    res["stdout"] = "\n".join(s for s in (ans["stdout"], res["stdout"]) if s)
+    return res
+
+@app.post("/api/research/{tid}/approve")
+def research_approve(tid: int, v: ResearchVerdict):
+    return research_verdict(tid, v.text, [WQ, "review", str(tid), "accept"])
+
+@app.post("/api/research/{tid}/reject")
+def research_reject(tid: int, v: ResearchVerdict):
+    """Never `wq review reject`: that reopens frank_gated for a re-answer and skips
+    the rejection ledger. bridge.py reject writes the ledger row and closes the
+    ticket; its --reason defaults to the frank_response `wq answer` just recorded."""
+    if not REJECT_CLASS_RE.match(v.reject_class):
+        return JSONResponse({"ok": False, "stderr": f"reject class must match {REJECT_CLASS_RE.pattern}"},
+                            status_code=400)
+    return research_verdict(tid, v.text, ["python3", RESEARCH_BRIDGE, "reject", str(tid),
+                                          "--class", v.reject_class])
 
 @app.post("/api/project")
 def project_new(p: ProjectNew):
